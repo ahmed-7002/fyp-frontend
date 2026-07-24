@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
@@ -25,6 +25,25 @@ export default function AssessmentFlow() {
 
   const steps = STEP_SEQUENCE[mode];
 
+  // Mark the session as "in progress" (unsaved) for as long as this screen
+  // is mounted, so the navbar knows to confirm before letting someone
+  // navigate away. Also warns on browser refresh/tab-close directly, since
+  // that bypasses in-app navigation entirely.
+  useEffect(() => {
+    update({ inProgress: true });
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = ""; // required for the native browser confirmation to show
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!state.profile) {
     navigate("/onboarding");
     return null;
@@ -47,7 +66,7 @@ export default function AssessmentFlow() {
         dass_answers: dassAnswers || undefined,
         fer_result: ferResult || undefined,
       });
-      update({ submissionResult: res.data, dassAnswers, ferResult });
+      update({ submissionResult: res.data, dassAnswers, ferResult, inProgress: false });
       navigate(`/results/${res.data.id}`);
     } catch (err) {
       setSubmitError(
@@ -74,6 +93,7 @@ export default function AssessmentFlow() {
   if (submitting) {
     return (
       <div className="max-w-md mx-auto px-6 pt-24 text-center">
+        <div className="w-8 h-8 mx-auto mb-4 rounded-full border-2 border-teal-light border-t-teal animate-spin" />
         <p className="text-muted">Scoring your results…</p>
       </div>
     );

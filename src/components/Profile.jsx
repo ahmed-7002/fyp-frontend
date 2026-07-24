@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
+import { ProfileSkeleton } from "./Skeleton.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -203,7 +204,7 @@ export default function Profile() {
 
       {error && <p className="text-clay">{error}</p>}
 
-      {!sessions && !error && <p className="text-muted">Loading your sessions…</p>}
+     {!sessions && !error && <ProfileSkeleton />}
 
       {sessions && sessions.length === 0 && (
         <div className="card p-8 text-center">

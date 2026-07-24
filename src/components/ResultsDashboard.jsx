@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useNavigate, useParams } from "react-router-dom";
 import { useApiClient } from "../lib/api.js";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
+import { ResultsSkeleton } from "./Skeleton.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -54,7 +55,7 @@ export default function ResultsDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  if (loading) return <p className="text-center text-muted pt-24">Loading your results…</p>;
+  if (loading) return <ResultsSkeleton />;
   if (error) return <p className="text-center text-clay pt-24">{error}</p>;
   if (!result) return null;
 
