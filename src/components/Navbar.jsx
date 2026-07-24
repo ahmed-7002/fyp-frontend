@@ -19,6 +19,9 @@ export default function Navbar() {
           </SignInButton>
         </SignedOut>
         <SignedIn>
+          <Link to="/profile" className="text-sm font-medium text-muted hover:text-ink transition-colors">
+            Profile
+          </Link>
           <UserButton afterSignOutUrl="/" />
         </SignedIn>
       </nav>

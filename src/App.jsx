@@ -6,6 +6,7 @@ import OnboardingForm from "./components/OnboardingForm.jsx";
 import AssessmentSelection from "./components/AssessmentSelection.jsx";
 import AssessmentFlow from "./components/AssessmentFlow.jsx";
 import ResultsDashboard from "./components/ResultsDashboard.jsx";
+import Profile from "./components/Profile.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
 import { AssessmentProvider } from "./lib/AssessmentContext.jsx";
 
@@ -45,6 +46,14 @@ export default function App() {
             element={
               <RequireAuth>
                 <ResultsDashboard />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/profile"
+            element={
+              <RequireAuth>
+                <Profile />
               </RequireAuth>
             }
           />
