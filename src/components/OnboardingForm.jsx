@@ -11,6 +11,12 @@ const GENDER_OPTIONS = [
   { value: "prefer_not_to_say", label: "Prefer not to say" },
 ];
 
+// Letters only (any language script) with single spaces between words -
+// no digits, no punctuation/symbols of any kind. \p{L} matches letters in
+// any language (needs the "u" regex flag), so accented names and
+// non-Latin scripts still work correctly.
+const NAME_PATTERN = /^\p{L}+(?: \p{L}+)*$/u;
+
 export default function OnboardingForm() {
   const { user } = useUser();
   const { update } = useAssessment();
@@ -23,14 +29,18 @@ export default function OnboardingForm() {
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    const trimmedName = fullName.trim();
     const ageNum = Number(age);
 
-    if (!fullName.trim()) return setError("Please enter your name.");
+    if (!trimmedName) return setError("Please enter your name.");
+    if (!NAME_PATTERN.test(trimmedName)) {
+      return setError("Name can only contain letters - no numbers or special characters.");
+    }
     if (!ageNum || ageNum < 10 || ageNum > 120) return setError("Please enter a valid age.");
     if (!gender) return setError("Please select a gender option.");
 
     setError("");
-    update({ profile: { fullName: fullName.trim(), age: ageNum, gender } });
+    update({ profile: { fullName: trimmedName, age: ageNum, gender } });
     navigate("/select");
   };
 
