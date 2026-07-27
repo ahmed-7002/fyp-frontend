@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useApiClient } from "../lib/api.js";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { ResultsSkeleton } from "./Skeleton.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -44,6 +45,8 @@ export default function ResultsDashboard() {
   const [result, setResult] = useState(state.submissionResult?.id === id ? state.submissionResult : null);
   const [loading, setLoading] = useState(!result);
   const [error, setError] = useState("");
+
+  usePageTitle("Your Results");
 
   useEffect(() => {
     if (result) return;

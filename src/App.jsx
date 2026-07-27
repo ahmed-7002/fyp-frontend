@@ -7,58 +7,64 @@ import AssessmentSelection from "./components/AssessmentSelection.jsx";
 import AssessmentFlow from "./components/AssessmentFlow.jsx";
 import ResultsDashboard from "./components/ResultsDashboard.jsx";
 import Profile from "./components/Profile.jsx";
+import NotFound from "./components/NotFound.jsx";
 import RequireAuth from "./components/RequireAuth.jsx";
 import { AssessmentProvider } from "./lib/AssessmentContext.jsx";
+import { ThemeProvider } from "./lib/ThemeContext.jsx";
 
 export default function App() {
   return (
-    <AssessmentProvider>
-      <Navbar />
-      <main>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route
-            path="/onboarding"
-            element={
-              <RequireAuth>
-                <OnboardingForm />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/select"
-            element={
-              <RequireAuth>
-                <AssessmentSelection />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/assessment/:mode"
-            element={
-              <RequireAuth>
-                <AssessmentFlow />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/results/:id"
-            element={
-              <RequireAuth>
-                <ResultsDashboard />
-              </RequireAuth>
-            }
-          />
-          <Route
-            path="/profile"
-            element={
-              <RequireAuth>
-                <Profile />
-              </RequireAuth>
-            }
-          />
-        </Routes>
-      </main>
-    </AssessmentProvider>
+    <ThemeProvider>
+      <AssessmentProvider>
+        <Navbar />
+        <main>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route
+              path="/onboarding"
+              element={
+                <RequireAuth>
+                  <OnboardingForm />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/select"
+              element={
+                <RequireAuth>
+                  <AssessmentSelection />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/assessment/:mode"
+              element={
+                <RequireAuth>
+                  <AssessmentFlow />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/results/:id"
+              element={
+                <RequireAuth>
+                  <ResultsDashboard />
+                </RequireAuth>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <RequireAuth>
+                  <Profile />
+                </RequireAuth>
+              }
+            />
+            {/* Catch-all - must stay last so it doesn't shadow real routes above it */}
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </main>
+      </AssessmentProvider>
+    </ThemeProvider>
   );
 }

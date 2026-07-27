@@ -3,6 +3,8 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
+import PrivacyNote from "./PrivacyNote.jsx";
 
 const GENDER_OPTIONS = [
   { value: "female", label: "Female" },
@@ -26,6 +28,8 @@ export default function OnboardingForm() {
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
   const [error, setError] = useState("");
+
+  usePageTitle("About You");
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -117,6 +121,8 @@ export default function OnboardingForm() {
           >
             Continue
           </button>
+
+          <PrivacyNote className="justify-center" />
         </form>
       </motion.div>
     </div>

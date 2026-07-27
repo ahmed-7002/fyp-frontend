@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { SignedIn, SignedOut, SignInButton } from "@clerk/clerk-react";
 import BreathingOrb from "./BreathingOrb.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
 
 const fadeUp = {
   hidden: { opacity: 0, y: 16 },
@@ -15,11 +16,18 @@ const fadeUp = {
 
 export default function LandingPage() {
   const navigate = useNavigate();
+  usePageTitle();
 
   return (
     <div className="max-w-6xl mx-auto px-6 md:px-12 pb-24">
       {/* Hero */}
-      <section className="grid md:grid-cols-2 gap-10 items-center pt-10 md:pt-20">
+      <section className="relative overflow-hidden grid md:grid-cols-2 gap-10 items-center pt-10 md:pt-20">
+        {/* Subtle decorative gradient - sits behind the copy/orb, never competes with them */}
+        <div className="absolute inset-0 -z-10 pointer-events-none" aria-hidden="true">
+          <div className="absolute top-1/2 right-0 -translate-y-1/2 w-[26rem] h-[26rem] rounded-full bg-teal/10 blur-3xl" />
+          <div className="absolute top-1/3 right-32 w-[16rem] h-[16rem] rounded-full bg-lavender/10 blur-3xl" />
+        </div>
+
         <motion.div initial="hidden" animate="visible" variants={fadeUp} custom={0}>
           <span className="inline-block text-xs tracking-[0.2em] uppercase text-teal font-medium mb-4">
             A quiet moment for yourself

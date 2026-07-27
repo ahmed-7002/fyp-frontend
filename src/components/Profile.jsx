@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
 import { ProfileSkeleton } from "./Skeleton.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -178,6 +179,7 @@ function SessionRow({ session, api }) {
 export default function Profile() {
   const { user } = useUser();
   const api = useApiClient();
+  usePageTitle("Your Profile");
 
   const [sessions, setSessions] = useState(null);
   const [error, setError] = useState("");
@@ -204,7 +206,7 @@ export default function Profile() {
 
       {error && <p className="text-clay">{error}</p>}
 
-     {!sessions && !error && <ProfileSkeleton />}
+      {!sessions && !error && <ProfileSkeleton />}
 
       {sessions && sessions.length === 0 && (
         <div className="card p-8 text-center">

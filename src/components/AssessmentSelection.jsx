@@ -2,6 +2,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { useNavigate } from "react-router-dom";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
 
 const MODES = [
   {
@@ -27,6 +28,7 @@ const MODES = [
 export default function AssessmentSelection() {
   const navigate = useNavigate();
   const { state, update } = useAssessment();
+  usePageTitle("Choose Assessment");
 
   if (!state.profile) {
     navigate("/onboarding");

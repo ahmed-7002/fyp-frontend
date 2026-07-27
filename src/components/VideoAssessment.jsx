@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useApiClient } from "../lib/api.js";
+import PrivacyNote from "./PrivacyNote.jsx";
 
 const TARGET_FRAMES = 155;          // within the required 150-160 range
 const DURATION_MS = 30_000;          // capture window: 30 seconds
@@ -179,12 +180,15 @@ export default function VideoAssessment({ onComplete }) {
       </div>
 
       {phase === "idle" && (
-        <button
-          onClick={requestCamera}
-          className="px-7 py-3.5 rounded-full bg-teal text-white font-medium hover:bg-teal-dark transition-colors"
-        >
-          Enable camera & start
-        </button>
+        <div>
+          <button
+            onClick={requestCamera}
+            className="px-7 py-3.5 rounded-full bg-teal text-white font-medium hover:bg-teal-dark transition-colors"
+          >
+            Enable camera & start
+          </button>
+          <PrivacyNote className="justify-center mt-4" />
+        </div>
       )}
 
       {phase === "requesting" && <p className="text-muted text-sm">Requesting camera access…</p>}

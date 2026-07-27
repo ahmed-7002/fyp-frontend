@@ -4,22 +4,25 @@ export default {
   theme: {
     extend: {
       colors: {
-        mist: "#F3F6F5",       // page background
-        surface: "#FFFFFF",
-        ink: "#1E2A28",        // primary text
-        muted: "#5B6B68",      // secondary text
+        // Each color reads from a CSS variable (defined in index.css for
+        // :root and .dark separately) so the whole existing app becomes
+        // theme-aware without touching a single component's class names.
+        mist: "rgb(var(--color-mist) / <alpha-value>)",
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        ink: "rgb(var(--color-ink) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
         teal: {
-          DEFAULT: "#2B6F6B",
-          dark: "#1E4F4C",
-          light: "#E4EFEE",
+          DEFAULT: "rgb(var(--color-teal) / <alpha-value>)",
+          dark: "rgb(var(--color-teal-dark) / <alpha-value>)",
+          light: "rgb(var(--color-teal-light) / <alpha-value>)",
         },
         lavender: {
-          DEFAULT: "#8C7AA9",
-          light: "#EFEBF4",
+          DEFAULT: "rgb(var(--color-lavender) / <alpha-value>)",
+          light: "rgb(var(--color-lavender-light) / <alpha-value>)",
         },
         clay: {
-          DEFAULT: "#C97B63",  // used sparingly - disclaimer / warning accent
-          light: "#F6E9E5",
+          DEFAULT: "rgb(var(--color-clay) / <alpha-value>)",
+          light: "rgb(var(--color-clay-light) / <alpha-value>)",
         },
       },
       fontFamily: {
