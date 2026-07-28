@@ -1,5 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { useApiClient } from "../lib/api.js";
 
 /**
  * DASS-21 in English and Urdu. Scoring only ever depends on the numeric
@@ -11,12 +12,25 @@ import { AnimatePresence, motion } from "framer-motion";
  * and are not a clinically-normed/officially validated instrument the way
  * the original English DASS-21 is. That's worth knowing if precise
  * clinical comparability matters for your use case.
+ *
+ * Text-to-speech has two layers:
+ *  1. Browser-native Web Speech API (window.speechSynthesis) - free,
+ *     instant, no backend involved. Used whenever the visitor's own
+ *     device has a voice installed for the selected language.
+ *  2. Backend gTTS fallback (GET /api/tts) - used only when the browser
+ *     has no voice for that language at all (common for Urdu on many
+ *     Windows machines). Requires the backend to have internet access
+ *     and takes a moment longer, since it's a real network request.
  */
 
 const LANGUAGES = [
   { code: "en", label: "English", native: "English" },
   { code: "ur", label: "Urdu", native: "اردو" },
 ];
+
+// BCP-47 tags for the browser API, plain ISO codes for the backend gTTS API.
+const SPEECH_LANG = { en: "en-US", ur: "ur-PK" };
+const TTS_LANG = { en: "en", ur: "ur" };
 
 const CONTENT = {
   en: {
@@ -27,6 +41,10 @@ const CONTENT = {
     changeLanguage: "Change language",
     chooseLanguageTitle: "Choose your language",
     chooseLanguageSubtitle: "You can switch anytime before you start.",
+    listen: "Listen to this question",
+    stopListening: "Stop",
+    loadingSpeech: "Loading audio…",
+    speechError: "Couldn't play audio - check your internet connection.",
     answerLabels: [
       "Did not apply to me at all",
       "Applied to me to some degree, or some of the time",
@@ -65,6 +83,10 @@ const CONTENT = {
     changeLanguage: "زبان تبدیل کریں",
     chooseLanguageTitle: "اپنی زبان منتخب کریں",
     chooseLanguageSubtitle: "آپ شروع کرنے سے پہلے کسی بھی وقت زبان تبدیل کر سکتے ہیں۔",
+    listen: "یہ سوال سنیں",
+    stopListening: "روکیں",
+    loadingSpeech: "آڈیو لوڈ ہو رہی ہے...",
+    speechError: "آڈیو چلانے میں مسئلہ ہوا - انٹرنیٹ کنکشن چیک کریں۔",
     answerLabels: [
       "مجھ پر بالکل لاگو نہیں ہوا",
       "کسی حد تک، یا کبھی کبھار مجھ پر لاگو ہوا",
@@ -97,6 +119,9 @@ const CONTENT = {
   },
 };
 
+// Native Web Speech API - no import needed, but not every browser has it.
+const SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
+
 /**
  * Renders a language picker first, then the DASS-21 one question at a
  * time. Calls onComplete(answers) with a 21-length array of 0-3 ints once
@@ -104,9 +129,52 @@ const CONTENT = {
  * AssessmentFlow.jsx needs no changes.
  */
 export default function DassQuestionnaire({ onComplete }) {
+  const api = useApiClient();
   const [language, setLanguage] = useState(null); // null until chosen
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState([]);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isLoadingSpeech, setIsLoadingSpeech] = useState(false);
+  const [speechError, setSpeechError] = useState(false);
+  const [voices, setVoices] = useState(() => (SPEECH_SUPPORTED ? window.speechSynthesis.getVoices() : []));
+
+  const audioRef = useRef(null); // holds the <audio> element for the gTTS fallback path
+
+  // Voice lists load asynchronously in some browsers (notably Chrome) -
+  // getVoices() can return an empty array on the very first call even
+  // when voices do exist, so we also listen for the moment they finish
+  // loading rather than trusting a single synchronous read.
+  useEffect(() => {
+    if (!SPEECH_SUPPORTED) return;
+    const updateVoices = () => setVoices(window.speechSynthesis.getVoices());
+    updateVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", updateVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", updateVoices);
+  }, []);
+
+  const stopAllSpeech = () => {
+    if (SPEECH_SUPPORTED) window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current = null;
+    }
+    setIsSpeaking(false);
+    setIsLoadingSpeech(false);
+  };
+
+  // Stop any in-progress speech whenever the question changes, the
+  // language changes, or the component unmounts - prevents two questions'
+  // audio from ever overlapping.
+  useEffect(() => {
+    return () => stopAllSpeech();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, language]);
+
+  const hasVoiceForLang = (bcp47) => {
+    const prefix = bcp47.split("-")[0].toLowerCase(); // "ur" from "ur-PK"
+    return voices.some((v) => v.lang.toLowerCase().startsWith(prefix));
+  };
 
   // --- Step 0: language selection ------------------------------------
   if (!language) {
@@ -137,6 +205,64 @@ export default function DassQuestionnaire({ onComplete }) {
   const t = CONTENT[language];
   const total = t.questions.length;
   const progress = (index / total) * 100;
+  const voiceAvailable = SPEECH_SUPPORTED && hasVoiceForLang(SPEECH_LANG[language]);
+
+  const speakWithBrowser = () => {
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(t.questions[index]);
+    utterance.lang = SPEECH_LANG[language];
+    utterance.rate = 0.95;
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const speakWithBackend = async () => {
+    setSpeechError(false);
+    setIsLoadingSpeech(true);
+    try {
+      const res = await api.get("/api/tts", {
+        params: { text: t.questions[index], lang: TTS_LANG[language] },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(res.data);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onplay = () => {
+        setIsLoadingSpeech(false);
+        setIsSpeaking(true);
+      };
+      audio.onended = () => {
+        setIsSpeaking(false);
+        URL.revokeObjectURL(url);
+      };
+      audio.onerror = () => {
+        setIsSpeaking(false);
+        setIsLoadingSpeech(false);
+        setSpeechError(true);
+        URL.revokeObjectURL(url);
+      };
+      await audio.play();
+    } catch {
+      setIsLoadingSpeech(false);
+      setSpeechError(true);
+    }
+  };
+
+  const speakQuestion = () => {
+    // Acts as a toggle: clicking while already speaking/loading just stops it.
+    if (isSpeaking || isLoadingSpeech) {
+      stopAllSpeech();
+      return;
+    }
+    setSpeechError(false);
+    if (voiceAvailable) {
+      speakWithBrowser();
+    } else {
+      speakWithBackend();
+    }
+  };
 
   const handleAnswer = (value) => {
     const next = [...answers];
@@ -193,9 +319,47 @@ export default function DassQuestionnaire({ onComplete }) {
           exit={{ opacity: 0, x: t.dir === "rtl" ? 18 : -18 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
         >
-          <h2 className="font-display text-2xl md:text-3xl text-ink leading-snug mb-8">
-            {t.questions[index]}
-          </h2>
+          <div className="flex items-start gap-3 mb-2">
+            <h2 className="font-display text-2xl md:text-3xl text-ink leading-snug flex-1">
+              {t.questions[index]}
+            </h2>
+
+            <button
+              onClick={speakQuestion}
+              aria-label={isSpeaking || isLoadingSpeech ? t.stopListening : t.listen}
+              title={isSpeaking || isLoadingSpeech ? t.stopListening : t.listen}
+              className={`shrink-0 mt-1.5 w-9 h-9 flex items-center justify-center rounded-full transition-colors ${
+                isSpeaking
+                  ? "bg-teal text-white"
+                  : "text-teal hover:bg-teal-light/40 border border-teal-light"
+              }`}
+            >
+              {isLoadingSpeech ? (
+                <div className="w-3.5 h-3.5 rounded-full border-2 border-teal-light border-t-teal animate-spin" />
+              ) : isSpeaking ? (
+                // Stop icon (small square) - shown while actively speaking
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="5" y="5" width="14" height="14" rx="2" />
+                </svg>
+              ) : (
+                // Speaker icon
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M4 9v6h4l5 4V5L8 9H4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+                  <path d="M17 8.5a5 5 0 0 1 0 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  <path
+                    d="M19.5 6a8.5 8.5 0 0 1 0 12"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    opacity="0.5"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
+
+          {speechError && <p className="text-xs text-clay mb-6">{t.speechError}</p>}
+          {!speechError && <div className="mb-6" />}
 
           <div className="space-y-3">
             {t.answerLabels.map((label, val) => (
