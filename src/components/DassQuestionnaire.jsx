@@ -178,13 +178,18 @@ export default function DassQuestionnaire({ onComplete }) {
 
   // --- Step 0: language selection ------------------------------------
   if (!language) {
+    const resuming = index > 0 || answers.length > 0;
     return (
       <div className="max-w-md mx-auto px-6 pt-16 pb-24 text-center">
         <span className="font-mono text-xs text-teal">Step 1</span>
         <h1 className="font-display text-2xl md:text-3xl text-ink mt-2 mb-2">
           Choose your language
         </h1>
-        <p className="text-muted mb-8">You can switch anytime before you start.</p>
+        <p className="text-muted mb-8">
+          {resuming
+            ? `You'll continue from question ${index + 1} - your answers so far are kept.`
+            : "You can switch anytime before you start."}
+        </p>
 
         <div className="space-y-3">
           {LANGUAGES.map((lang) => (
@@ -298,11 +303,7 @@ export default function DassQuestionnaire({ onComplete }) {
           </div>
         </div>
         <button
-          onClick={() => {
-            setLanguage(null);
-            setIndex(0);
-            setAnswers([]);
-          }}
+          onClick={() => setLanguage(null)}
           className="ms-4 text-xs text-muted hover:text-ink transition-colors whitespace-nowrap"
         >
           {t.changeLanguage}
