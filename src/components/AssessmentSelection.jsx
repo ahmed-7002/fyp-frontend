@@ -36,7 +36,10 @@ export default function AssessmentSelection() {
   }
 
   const handleSelect = (mode) => {
-    update({ mode });
+    // Explicitly clear any previous session's result before starting a new
+    // one, so a stale single-mode result can never linger into a new
+    // assessment's view.
+    update({ mode, submissionResult: null });
     navigate(`/assessment/${mode}`);
   };
 

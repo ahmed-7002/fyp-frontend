@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
+import { usePageTitle } from "../lib/usePageTitle.js";
 import DassQuestionnaire from "./DassQuestionnaire.jsx";
 import VideoAssessment from "./VideoAssessment.jsx";
 
@@ -22,8 +23,22 @@ export default function AssessmentFlow() {
   const [stepIndex, setStepIndex] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState("");
+  // Collected data for THIS session only - local to this component instance,
+  // so it always starts empty on a fresh mount and can never carry over
+  // data from a previous, unrelated assessment (that was the bug: the old
+  // code fell back to shared context state for whichever step type wasn't
+  // part of the current mode, which could still hold a prior session's
+  // leftover video/questionnaire result).
+  const [collected, setCollected] = useState({});
 
   const steps = STEP_SEQUENCE[mode];
+
+  const MODE_TITLES = {
+    questionnaire: "Question-based Assessment",
+    video: "Video Assessment",
+    combined: "Combined Assessment",
+  };
+  usePageTitle(MODE_TITLES[mode] || "Assessment");
 
   // Mark the session as "in progress" (unsaved) for as long as this screen
   // is mounted, so the navbar knows to confirm before letting someone
@@ -66,7 +81,7 @@ export default function AssessmentFlow() {
         dass_answers: dassAnswers || undefined,
         fer_result: ferResult || undefined,
       });
-      update({ submissionResult: res.data, dassAnswers, ferResult, inProgress: false });
+      update({ submissionResult: res.data, inProgress: false });
       navigate(`/results/${res.data.id}`);
     } catch (err) {
       setSubmitError(
@@ -77,13 +92,17 @@ export default function AssessmentFlow() {
   };
 
   const handleStepComplete = (stepKey, data) => {
-    if (stepKey === "dass") update({ dassAnswers: data });
-    if (stepKey === "video") update({ ferResult: data });
+    const updatedCollected = { ...collected, [stepKey]: data };
+    setCollected(updatedCollected);
 
     const isLastStep = stepIndex === steps.length - 1;
     if (isLastStep) {
-      const finalDass = stepKey === "dass" ? data : state.dassAnswers;
-      const finalFer = stepKey === "video" ? data : state.ferResult;
+      // Only ever submit data for step types that are actually part of
+      // THIS mode's step sequence - e.g. a "questionnaire" mode never has
+      // "video" in `steps`, so finalFer correctly stays undefined instead
+      // of picking up a leftover result from an earlier, different session.
+      const finalDass = steps.includes("dass") ? updatedCollected.dass : undefined;
+      const finalFer = steps.includes("video") ? updatedCollected.video : undefined;
       submitFinal(finalDass, finalFer);
     } else {
       setStepIndex(stepIndex + 1);

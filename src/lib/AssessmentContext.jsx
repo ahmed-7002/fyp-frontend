@@ -5,8 +5,6 @@ const AssessmentContext = createContext(null);
 const initialState = {
   profile: null,          // { fullName, age, gender }
   mode: null,              // "questionnaire" | "video" | "combined"
-  dassAnswers: null,        // number[21]
-  ferResult: null,          // { frames_captured, ..., dominant_emotion }
   submissionResult: null,   // full AssessmentSubmitOut from backend
   inProgress: false,        // true while a session is actively being taken (unsaved)
 };
