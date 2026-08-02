@@ -149,11 +149,27 @@ export default function CombinedAssessmentFlow() {
   // --- Questionnaire phase: capture runs silently behind this ------------
   return (
     <div>
-      {/* Visually hidden - present only so the capture hook has a real
-          <video> element to decode the camera stream into. */}
-      <video ref={capture.videoRef} muted playsInline className="absolute w-px h-px opacity-0 pointer-events-none" />
-
       <DassQuestionnaire onComplete={handleDassComplete} />
+
+      {/* Small self-preview - lets the person confirm their face is
+          actually framed in shot, mirrored like a normal selfie camera.
+          Positioned top-right (below the navbar) deliberately separate
+          from the bottom-right status pill/error corner below, so the two
+          don't crowd each other on narrow phone screens. */}
+      <div className="fixed top-20 right-4 md:right-6 z-40 w-24 h-32 md:w-28 md:h-36 rounded-xl overflow-hidden border-2 border-teal shadow-soft bg-ink">
+        <video
+          ref={capture.videoRef}
+          muted
+          playsInline
+          className="w-full h-full object-cover -scale-x-100"
+        />
+        {capture.isCapturing && (
+          <span className="absolute top-1.5 right-1.5 flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-teal" />
+          </span>
+        )}
+      </div>
 
       {capture.isCapturing && (
         <div className="fixed bottom-6 right-6 z-40 flex items-center gap-2 bg-surface border border-teal-light/60 rounded-full pl-3 pr-4 py-2 shadow-soft">
