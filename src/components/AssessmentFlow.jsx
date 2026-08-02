@@ -6,11 +6,16 @@ import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
 import DassQuestionnaire from "./DassQuestionnaire.jsx";
 import VideoAssessment from "./VideoAssessment.jsx";
+import CombinedAssessmentFlow from "./CombinedAssessmentFlow.jsx";
 
+// Combined mode is intentionally NOT listed here anymore - it has its own
+// dedicated component (CombinedAssessmentFlow.jsx) since it needs the
+// questionnaire and background video capture running concurrently rather
+// than as sequential steps. Questionnaire-only and Video-only modes are
+// unchanged from before.
 const STEP_SEQUENCE = {
   questionnaire: ["dass"],
   video: ["video"],
-  combined: ["dass", "video"],
 };
 
 export default function AssessmentFlow() {
@@ -25,10 +30,7 @@ export default function AssessmentFlow() {
   const [submitError, setSubmitError] = useState("");
   // Collected data for THIS session only - local to this component instance,
   // so it always starts empty on a fresh mount and can never carry over
-  // data from a previous, unrelated assessment (that was the bug: the old
-  // code fell back to shared context state for whichever step type wasn't
-  // part of the current mode, which could still hold a prior session's
-  // leftover video/questionnaire result).
+  // data from a previous, unrelated assessment.
   const [collected, setCollected] = useState({});
 
   const steps = STEP_SEQUENCE[mode];
@@ -44,7 +46,13 @@ export default function AssessmentFlow() {
   // is mounted, so the navbar knows to confirm before letting someone
   // navigate away. Also warns on browser refresh/tab-close directly, since
   // that bypasses in-app navigation entirely.
+  //
+  // Skipped for combined mode - CombinedAssessmentFlow sets up its own
+  // identical guard, since it's a separate component that renders instead
+  // of this one's questionnaire/video step engine below.
   useEffect(() => {
+    if (mode === "combined") return;
+
     update({ inProgress: true });
 
     const handleBeforeUnload = (e) => {
@@ -57,12 +65,20 @@ export default function AssessmentFlow() {
       window.removeEventListener("beforeunload", handleBeforeUnload);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mode]);
 
   if (!state.profile) {
     navigate("/onboarding");
     return null;
   }
+
+  // Combined mode: hand off entirely to its own component (questionnaire +
+  // background video capture running concurrently). Everything below this
+  // point is only for questionnaire-only and video-only modes.
+  if (mode === "combined") {
+    return <CombinedAssessmentFlow />;
+  }
+
   if (!steps) {
     navigate("/select");
     return null;

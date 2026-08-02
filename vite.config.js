@@ -5,5 +5,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
+    allowedHosts: ["etching-phosphate-juiciness.ngrok-free.dev"],
   },
 });
