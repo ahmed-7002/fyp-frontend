@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/clerk-react";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
@@ -55,6 +55,40 @@ export default function Navbar() {
       setPendingPath(path);
     }
   };
+
+  // --- Native browser back button / swipe-back interception -------------
+  // The confirmation above only catches clicks on links *inside* this app -
+  // it does nothing against the browser's own Back button or a mobile
+  // swipe-back gesture, since those never call handleNavClick at all.
+  //
+  // This project uses classic <BrowserRouter>, not a "data router", so
+  // React Router's useBlocker/usePrompt hooks aren't available here (they
+  // require createBrowserRouter). This uses the lower-level browser History
+  // API instead: while a session is in progress, an extra history entry is
+  // pushed so the back button/gesture lands on that buffer entry first
+  // (intercepted here) rather than immediately leaving the page. A native
+  // `popstate` event can't be cancelled the way `beforeunload` can - by the
+  // time we're notified, the browser has already moved - so the standard
+  // pattern is to immediately push the URL back to neutralize that
+  // navigation, then show the same confirmation modal as everywhere else.
+  useEffect(() => {
+    if (!state.inProgress) return;
+
+    // Buffer entry - gives the back button/gesture something to "consume"
+    // first instead of immediately navigating away.
+    window.history.pushState(null, "", window.location.href);
+
+    const handlePopState = () => {
+      // Neutralize the navigation that already happened by pushing the
+      // current URL back on top, then ask for confirmation exactly like a
+      // navbar link click would.
+      window.history.pushState(null, "", window.location.href);
+      setPendingPath("/");
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [state.inProgress]);
 
   const confirmLeave = () => {
     reset();
