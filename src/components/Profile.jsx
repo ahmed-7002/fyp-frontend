@@ -4,6 +4,8 @@ import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
 import { ProfileSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
+import DeleteConfirmToast from "./DeleteConfirmToast.jsx";
+import SuccessToast from "./SuccessToast.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -51,7 +53,7 @@ function formatDate(iso) {
  * breakdown, summary) only the first time it's expanded, then caches it
  * locally so re-collapsing/re-expanding doesn't refetch.
  */
-function SessionRow({ session, api }) {
+function SessionRow({ session, api, onRequestDelete }) {
   const [expanded, setExpanded] = useState(false);
   const [detail, setDetail] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,12 @@ function SessionRow({ session, api }) {
     }
   };
 
+  const handleDeleteClick = (e) => {
+    // Stop this from also bubbling up to the row's own toggle() click.
+    e.stopPropagation();
+    onRequestDelete(session.id);
+  };
+
   return (
     <div className="card overflow-hidden">
       <button
@@ -92,6 +100,30 @@ function SessionRow({ session, api }) {
           >
             {session.final_risk_level}
           </span>
+
+          {/* Delete trigger - opens the confirmation toast, does not delete by itself */}
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={handleDeleteClick}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") handleDeleteClick(e);
+            }}
+            aria-label="Delete this session"
+            title="Delete this session"
+            className="w-7 h-7 flex items-center justify-center rounded-full text-muted hover:text-clay hover:bg-clay-light/50 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+
           <motion.span animate={{ rotate: expanded ? 180 : 0 }} transition={{ duration: 0.2 }} className="text-muted">
             ▾
           </motion.span>
@@ -184,6 +216,12 @@ export default function Profile() {
   const [sessions, setSessions] = useState(null);
   const [error, setError] = useState("");
 
+  // --- Delete flow state --------------------------------------------------
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+
   useEffect(() => {
     let mounted = true;
     api
@@ -196,6 +234,33 @@ export default function Profile() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const requestDelete = (id) => {
+    setDeleteError("");
+    setPendingDeleteId(id);
+  };
+
+  const cancelDelete = () => {
+    if (deleting) return; // don't allow dismissing mid-request
+    setPendingDeleteId(null);
+    setDeleteError("");
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      await api.delete(`/api/assessments/${pendingDeleteId}`);
+      setSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
+      setPendingDeleteId(null);
+      setSuccessMessage("Session deleted");
+    } catch {
+      setDeleteError("Couldn't delete this session. Please try again.");
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <div className="max-w-3xl mx-auto px-6 pt-16 pb-24">
@@ -217,10 +282,24 @@ export default function Profile() {
       {sessions && sessions.length > 0 && (
         <div className="space-y-3">
           {sessions.map((session) => (
-            <SessionRow key={session.id} session={session} api={api} />
+            <SessionRow key={session.id} session={session} api={api} onRequestDelete={requestDelete} />
           ))}
         </div>
       )}
+
+      <DeleteConfirmToast
+        open={pendingDeleteId !== null}
+        onCancel={cancelDelete}
+        onHoldComplete={confirmDelete}
+        deleting={deleting}
+        error={deleteError}
+      />
+
+      <SuccessToast
+        open={!!successMessage}
+        message={successMessage}
+        onDismiss={() => setSuccessMessage("")}
+      />
     </div>
   );
 }
