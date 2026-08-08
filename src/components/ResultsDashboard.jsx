@@ -5,6 +5,7 @@ import { useApiClient } from "../lib/api.js";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { ResultsSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
+import TipsCard from "./TipsCard.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -62,7 +63,7 @@ export default function ResultsDashboard() {
   if (error) return <p className="text-center text-clay pt-24">{error}</p>;
   if (!result) return null;
 
-  const { dass_result, fer_result, final_risk_level, final_summary } = result;
+  const { dass_result, fer_result, final_risk_level, final_summary, actionable_tips } = result;
 
   return (
     <div className="max-w-4xl mx-auto px-6 pt-14 pb-24">
@@ -121,6 +122,8 @@ export default function ResultsDashboard() {
             </div>
           </section>
         )}
+
+        <TipsCard tips={actionable_tips} />
 
         <div className="card p-6 border-clay/30 bg-clay-light/40 mb-8">
           <p className="text-sm text-ink/80">

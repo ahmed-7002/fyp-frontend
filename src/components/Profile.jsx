@@ -6,6 +6,7 @@ import { ProfileSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
 import DeleteConfirmToast from "./DeleteConfirmToast.jsx";
 import SuccessToast from "./SuccessToast.jsx";
+import TipsCard from "./TipsCard.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -50,8 +51,8 @@ function formatDate(iso) {
 
 /**
  * A session row that lazily fetches its own full detail (DASS scores, FER
- * breakdown, summary) only the first time it's expanded, then caches it
- * locally so re-collapsing/re-expanding doesn't refetch.
+ * breakdown, summary, and tips) only the first time it's expanded, then
+ * caches it locally so re-collapsing/re-expanding doesn't refetch.
  */
 function SessionRow({ session, api, onRequestDelete }) {
   const [expanded, setExpanded] = useState(false);
@@ -198,6 +199,8 @@ function SessionRow({ session, api, onRequestDelete }) {
                       </div>
                     </div>
                   )}
+
+                  <TipsCard tips={detail.actionable_tips} />
                 </div>
               )}
             </div>
@@ -241,7 +244,7 @@ export default function Profile() {
   };
 
   const cancelDelete = () => {
-    if (deleting) return; // don't allow dismissing mid-request
+    if (deleting) return;
     setPendingDeleteId(null);
     setDeleteError("");
   };
