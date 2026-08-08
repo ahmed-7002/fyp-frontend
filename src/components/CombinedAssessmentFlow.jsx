@@ -6,24 +6,8 @@ import { useApiClient } from "../lib/api.js";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { useBackgroundCapture } from "../lib/useBackgroundCapture.js";
 import DassQuestionnaire from "./DassQuestionnaire.jsx";
+import LoadingCarousel from "./LoadingCarousel.jsx"; // <-- 1. Import Carousel
 
-/**
- * Combined mode, restructured: instead of "answer 21 questions, THEN
- * separately look at the camera for 30 seconds," the webcam captures a
- * frame every ~2 seconds silently in the background *while* the person
- * answers the questionnaire - capturing genuine reactions to the actual
- * content, not a disconnected follow-up moment. Capture stops the instant
- * either 155 frames is reached or the questionnaire finishes, whichever
- * comes first, then both are analyzed together.
- *
- * Phases:
- *   intro         - explains what's about to happen, requests camera access
- *                   on an explicit user gesture (not silently on page load)
- *   questionnaire - DassQuestionnaire on screen; capture running behind it
- *   analyzing     - questionnaire just finished; uploading captured frames
- *   submitting    - both results being scored and saved
- *   error         - something failed; offers a retry
- */
 export default function CombinedAssessmentFlow() {
   const { user } = useUser();
   const api = useApiClient();
@@ -35,12 +19,6 @@ export default function CombinedAssessmentFlow() {
 
   const capture = useBackgroundCapture(phase === "questionnaire");
 
-  // --- Draggable self-preview window -------------------------------------
-  // Native React state/refs, no extra library - avoids adding a new
-  // dependency (and a fresh `npm install` step) for something this small.
-  // `dragPos` is null until the person drags for the first time, at which
-  // point the box switches from its default CSS-positioned corner to
-  // following an explicit pixel position instead.
   const [dragPos, setDragPos] = useState(null);
   const previewBoxRef = useRef(null);
   const dragState = useRef({ dragging: false, startX: 0, startY: 0, origX: 0, origY: 0 });
@@ -78,7 +56,7 @@ export default function CombinedAssessmentFlow() {
   useEffect(() => {
     const handleMove = (e) => {
       if (!dragState.current.dragging) return;
-      e.preventDefault(); // stops page/touch scroll while actively dragging
+      e.preventDefault();
       const { clientX, clientY } = getPoint(e);
       const dx = clientX - dragState.current.startX;
       const dy = clientY - dragState.current.startY;
@@ -101,7 +79,6 @@ export default function CombinedAssessmentFlow() {
     };
   }, []);
 
-  // Same "unsaved progress" guard as the other assessment modes.
   useEffect(() => {
     update({ inProgress: true });
     const handleBeforeUnload = (e) => {
@@ -118,10 +95,6 @@ export default function CombinedAssessmentFlow() {
     const frames = await capture.stopAndGetFrames();
 
     let ferResult = null;
-    // Only attempt video analysis if a meaningful number of frames exist -
-    // e.g. camera permission was denied, or the person answered so fast
-    // almost nothing was captured. In that case we degrade gracefully to a
-    // questionnaire-only result rather than failing the whole submission.
     if (frames.length >= 10) {
       try {
         const formData = new FormData();
@@ -131,8 +104,6 @@ export default function CombinedAssessmentFlow() {
         });
         ferResult = res.data;
       } catch {
-        // Video analysis failed - still proceed with the questionnaire
-        // result rather than losing everything the person just answered.
         ferResult = null;
       }
     }
@@ -156,7 +127,6 @@ export default function CombinedAssessmentFlow() {
     }
   };
 
-  // --- Intro / consent screen -----------------------------------------
   if (phase === "intro") {
     return (
       <div className="max-w-lg mx-auto px-6 pt-16 pb-24 text-center">
@@ -185,19 +155,22 @@ export default function CombinedAssessmentFlow() {
     );
   }
 
-  // --- Analyzing / submitting loading states --------------------------
+  // --- 2. Update this section to use the Carousel ---
   if (phase === "analyzing" || phase === "submitting") {
     return (
       <div className="max-w-md mx-auto px-6 pt-24 text-center">
-        <div className="w-8 h-8 mx-auto mb-4 rounded-full border-2 border-teal-light border-t-teal animate-spin" />
-        <p className="text-muted">
-          {phase === "analyzing" ? "Analyzing your captured expressions…" : "Scoring your results…"}
-        </p>
+        {phase === "analyzing" ? (
+          <LoadingCarousel />
+        ) : (
+          <div className="flex flex-col items-center justify-center mt-4 min-h-[100px]">
+            <div className="w-8 h-8 mx-auto mb-5 rounded-full border-2 border-teal-light border-t-teal animate-spin" />
+            <p className="text-muted text-sm italic">Scoring your results…</p>
+          </div>
+        )}
       </div>
     );
   }
 
-  // --- Error state ------------------------------------------------------
   if (phase === "error") {
     return (
       <div className="max-w-md mx-auto px-6 pt-24 text-center">
@@ -212,7 +185,6 @@ export default function CombinedAssessmentFlow() {
     );
   }
 
-  // --- Questionnaire phase: capture runs silently behind this ------------
   const previewStyle = dragPos
     ? { position: "fixed", left: dragPos.x, top: dragPos.y, right: "auto" }
     : undefined;
@@ -222,11 +194,6 @@ export default function CombinedAssessmentFlow() {
     <div>
       <DassQuestionnaire onComplete={handleDassComplete} />
 
-      {/* Draggable self-preview - lets the person confirm their face is
-          actually framed in shot, mirrored like a normal selfie camera.
-          Starts in the top-right corner (below the navbar); once dragged,
-          it switches to following the exact pixel position it was moved
-          to, clamped so it can never be dragged fully off-screen. */}
       <div
         ref={previewBoxRef}
         onMouseDown={handleDragStart}

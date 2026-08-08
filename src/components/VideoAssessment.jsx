@@ -2,34 +2,15 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useApiClient } from "../lib/api.js";
 import PrivacyNote from "./PrivacyNote.jsx";
+import LoadingCarousel from "./LoadingCarousel.jsx"; // <-- 1. Import Carousel
 
-const TARGET_FRAMES = 155;          // within the required 150-160 range
-const DURATION_MS = 30_000;          // capture window: 30 seconds
-const CAPTURE_INTERVAL_MS = DURATION_MS / TARGET_FRAMES; // ~193ms between frames
-const CAPTURE_WIDTH = 320;           // downscaled - plenty for face-emotion detection, keeps encode fast
+const TARGET_FRAMES = 155;          
+const DURATION_MS = 30_000;          
+const CAPTURE_INTERVAL_MS = DURATION_MS / TARGET_FRAMES; 
+const CAPTURE_WIDTH = 320;           
 const CAPTURE_HEIGHT = 240;
 const JPEG_QUALITY = 0.8;
 
-/**
- * Captures TARGET_FRAMES individual JPEG snapshots evenly spaced across
- * DURATION_MS, then uploads them as multipart/form-data to /api/fer/analyze.
- *
- * Performance notes (why this doesn't freeze the browser):
- *  - We NEVER touch the DOM video element's native resolution; frames are
- *    drawn onto a small off-screen <canvas> at 320x240, which keeps every
- *    draw + encode operation cheap.
- *  - canvas.toBlob() is used instead of canvas.toDataURL(). toBlob encodes
- *    asynchronously off the main thread's synchronous call stack (it still
- *    runs on the main thread internally, but returns via a callback so it
- *    never blocks rendering/input the way a large synchronous
- *    toDataURL() call can), and produces binary data ready for upload
- *    with no base64 bloat.
- *  - Frames are scheduled with setInterval instead of requestAnimationFrame
- *    so capture cadence is time-accurate and decoupled from paint/rAF load.
- *  - Each captured Blob is pushed into a plain array (no re-renders per
- *    frame) - React state only updates a lightweight frame counter, not the
- *    frame data itself, so the UI stays responsive throughout capture.
- */
 export default function VideoAssessment({ onComplete }) {
   const api = useApiClient();
   const videoRef = useRef(null);
@@ -38,7 +19,7 @@ export default function VideoAssessment({ onComplete }) {
   const framesRef = useRef([]);
   const intervalRef = useRef(null);
 
-  const [phase, setPhase] = useState("idle"); // idle | requesting | recording | uploading | error
+  const [phase, setPhase] = useState("idle"); 
   const [frameCount, setFrameCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -53,7 +34,7 @@ export default function VideoAssessment({ onComplete }) {
     }
   }, []);
 
-  useEffect(() => stopStream, [stopStream]); // cleanup on unmount
+  useEffect(() => stopStream, [stopStream]); 
 
   const captureFrame = useCallback(() => {
     const video = videoRef.current;
@@ -112,7 +93,6 @@ export default function VideoAssessment({ onComplete }) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
         stopStream();
-        // Give the last toBlob callback a brief moment to resolve
         setTimeout(() => uploadFrames(framesRef.current), 250);
       }
     }, CAPTURE_INTERVAL_MS);
@@ -199,7 +179,8 @@ export default function VideoAssessment({ onComplete }) {
         </p>
       )}
 
-      {phase === "uploading" && <p className="text-muted text-sm">Analyzing your session…</p>}
+      {/* --- 2. Update this section to use the Carousel --- */}
+      {phase === "uploading" && <LoadingCarousel />}
 
       {phase === "error" && (
         <div>
