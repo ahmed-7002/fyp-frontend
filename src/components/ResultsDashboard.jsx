@@ -6,6 +6,7 @@ import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { ResultsSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
 import TipsCard from "./TipsCard.jsx";
+import BreathingOrb from "./BreathingOrb.jsx";
 
 const SEVERITY_COLOR = {
   Normal: "bg-teal-light text-teal-dark",
@@ -124,6 +125,25 @@ export default function ResultsDashboard() {
         )}
 
         <TipsCard tips={actionable_tips} />
+
+        {/* Breathing-exercise CTA - sits right after the tips, before the
+           final disclaimer, so it reads as one more concrete, actionable
+           step rather than an afterthought below everything else. */}
+        <motion.button
+          onClick={() => navigate("/exercises")}
+          whileHover={{ scale: 1.01 }}
+          whileTap={{ scale: 0.99 }}
+          className="w-full card p-5 mb-8 flex items-center gap-4 text-left hover:border-teal/40 transition-colors"
+        >
+          <div className="shrink-0">
+            <BreathingOrb size={56} showLabel={false} />
+          </div>
+          <div className="flex-1">
+            <p className="font-display text-lg text-ink">Feeling overwhelmed?</p>
+            <p className="text-sm text-muted">Try a short guided breathing exercise before you go.</p>
+          </div>
+          <span className="text-teal text-lg" aria-hidden="true">→</span>
+        </motion.button>
 
         <div className="card p-6 border-clay/30 bg-clay-light/40 mb-8">
           <p className="text-sm text-ink/80">
