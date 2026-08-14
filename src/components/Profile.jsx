@@ -4,14 +4,15 @@ import { Link } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
+  Legend,
 } from "recharts";
 import { useApiClient } from "../lib/api.js";
 import { useTheme } from "../lib/ThemeContext.jsx";
@@ -312,26 +313,46 @@ function EmptyChartState({ message }) {
  * than linking to a separate route, since this app only has one /profile
  * page today.
  */
-function InsightsSection({ fullSessions, loading, onViewAllClick }) {
+function InsightsSection({ api, refreshToken, onViewAllClick }) {
   const colors = useThemeColors();
   const [rangeKey, setRangeKey] = useState("30d");
+  const [filtered, setFiltered] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const filtered = useMemo(() => {
-    const range = TIME_RANGES.find((r) => r.key === rangeKey);
-    if (!range || range.days === null) return fullSessions;
-    const cutoff = Date.now() - range.days * 24 * 60 * 60 * 1000;
-    return fullSessions.filter((s) => new Date(s.created_at).getTime() >= cutoff);
-  }, [fullSessions, rangeKey]);
+  // Single range-filtered, column-trimmed request per range change -
+  // replaces the old "fetch full detail for every session, then filter by
+  // date in the browser" N+1 pattern. The backend applies the date cutoff
+  // in SQL and only selects the fields these charts use, so this stays
+  // fast even with a long session history.
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    setError("");
+    api
+      .get(`/api/assessments/insights?range=${rangeKey}`)
+      .then((res) => mounted && setFiltered(res.data))
+      .catch(() => mounted && setError("Couldn't load insights."))
+      .finally(() => mounted && setLoading(false));
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rangeKey, refreshToken]);
 
-  // Line/area chart data - questionnaire + combined sessions only, each
-  // point being the combined DASS total (see sessionTrackScore above).
+  // Line chart data - questionnaire + combined sessions only, each point
+  // carrying all three DASS-21 subscale scores separately (rather than a
+  // single summed total), so depression/anxiety/stress can each be drawn
+  // as their own colored line instead of being collapsed together.
   const progressData = useMemo(() => {
     return filtered
       .filter((s) => (s.assessment_mode === "questionnaire" || s.assessment_mode === "combined") && s.dass_result)
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
       .map((s) => ({
         date: formatShortDate(s.created_at),
-        score: s.dass_result.depression_score + s.dass_result.anxiety_score + s.dass_result.stress_score,
+        depression: s.dass_result.depression_score,
+        anxiety: s.dass_result.anxiety_score,
+        stress: s.dass_result.stress_score,
       }));
   }, [filtered]);
 
@@ -390,6 +411,8 @@ function InsightsSection({ fullSessions, loading, onViewAllClick }) {
         </select>
       </div>
 
+      {error && <p className="text-clay text-sm mb-4">{error}</p>}
+
       {loading ? (
         <div className="grid md:grid-cols-2 gap-6 mb-10">
           <div className="card p-6 rounded-2xl h-72 animate-pulse bg-mist/40" />
@@ -397,35 +420,59 @@ function InsightsSection({ fullSessions, loading, onViewAllClick }) {
         </div>
       ) : (
         <div className="grid md:grid-cols-2 gap-6 mb-10">
-          <ChartCard title="Overall Progress" infoLabel="Combined DASS-21 total (depression + anxiety + stress) across question-based and combined sessions.">
+          <ChartCard
+            title="Overall Progress"
+            infoLabel="DASS-21 scores for depression, anxiety, and stress across question-based and combined sessions."
+          >
             {progressData.length === 0 ? (
               <EmptyChartState message="No question-based sessions in this range yet." />
             ) : (
               <ResponsiveContainer width="100%" height={240}>
-                <AreaChart data={progressData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="progressFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={colors.teal} stopOpacity={0.35} />
-                      <stop offset="100%" stopColor={colors.teal} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
+                <LineChart data={progressData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke={colors.mist} />
                   <XAxis dataKey="date" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={28} />
+                  {/* Positive width + non-negative chart margin so tick labels
+                      (incl. their leading digit) render fully inside the card
+                      instead of being clipped by the card's own border/padding. */}
+                  <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={34} />
                   <Tooltip
                     contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
                     labelStyle={{ color: colors.ink }}
                   />
-                  <Area
+                  <Legend
+                    verticalAlign="top"
+                    height={28}
+                    iconType="circle"
+                    wrapperStyle={{ fontSize: 11, color: colors.muted }}
+                  />
+                  <Line
                     type="monotone"
-                    dataKey="score"
+                    dataKey="depression"
+                    name="Depression"
                     stroke={colors.teal}
                     strokeWidth={2.5}
-                    fill="url(#progressFill)"
-                    dot={{ r: 4, fill: colors.teal, strokeWidth: 0 }}
-                    activeDot={{ r: 6 }}
+                    dot={{ r: 3, fill: colors.teal, strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
                   />
-                </AreaChart>
+                  <Line
+                    type="monotone"
+                    dataKey="anxiety"
+                    name="Anxiety"
+                    stroke={colors.lavender}
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: colors.lavender, strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="stress"
+                    name="Stress"
+                    stroke={colors.clay}
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: colors.clay, strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </LineChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
@@ -649,18 +696,6 @@ export default function Profile() {
   const [sessions, setSessions] = useState(null);
   const [error, setError] = useState("");
 
-  // --- Insights data: full detail for every session, fetched in parallel
-  // once the summary list has loaded. This is the "simplest frontend"
-  // approach explicitly chosen over adding a new richer backend endpoint -
-  // worth knowing it means one extra request per session on every profile
-  // load, which is fine for a modest session count but would be worth
-  // revisiting (a dedicated summary-with-scores endpoint) if this list
-  // grows very large. Partial failures don't break the whole page - a
-  // session whose detail fetch fails is just left out of fullSessions
-  // rather than crashing the Insights section.
-  const [fullSessions, setFullSessions] = useState([]);
-  const [insightsLoading, setInsightsLoading] = useState(true);
-
   const allSessionsRef = useRef(null);
 
   // --- Delete flow state --------------------------------------------------
@@ -668,6 +703,10 @@ export default function Profile() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  // Bumped after a successful delete so InsightsSection (which now owns
+  // its own fetch against /api/assessments/insights) refetches instead of
+  // continuing to show the deleted session in its charts.
+  const [insightsRefreshToken, setInsightsRefreshToken] = useState(0);
 
   useEffect(() => {
     let mounted = true;
@@ -681,29 +720,6 @@ export default function Profile() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!sessions) return;
-    if (sessions.length === 0) {
-      setInsightsLoading(false);
-      return;
-    }
-    let mounted = true;
-    setInsightsLoading(true);
-    Promise.allSettled(sessions.map((s) => api.get(`/api/assessments/${s.id}`)))
-      .then((results) => {
-        if (!mounted) return;
-        const merged = results
-          .map((r, i) => (r.status === "fulfilled" ? { ...sessions[i], ...r.value.data } : null))
-          .filter(Boolean);
-        setFullSessions(merged);
-      })
-      .finally(() => mounted && setInsightsLoading(false));
-    return () => {
-      mounted = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions]);
 
   const requestDelete = (id) => {
     setDeleteError("");
@@ -723,7 +739,7 @@ export default function Profile() {
     try {
       await api.delete(`/api/assessments/${pendingDeleteId}`);
       setSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
-      setFullSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
+      setInsightsRefreshToken((t) => t + 1);
       setPendingDeleteId(null);
       setSuccessMessage("Session deleted");
     } catch {
@@ -754,7 +770,7 @@ export default function Profile() {
       {!sessions && !error && <ProfileSkeleton />}
 
       {sessions && sessions.length > 0 && (
-        <InsightsSection fullSessions={fullSessions} loading={insightsLoading} onViewAllClick={scrollToAllSessions} />
+        <InsightsSection api={api} refreshToken={insightsRefreshToken} onViewAllClick={scrollToAllSessions} />
       )}
 
       {sessions && sessions.length === 0 && (
