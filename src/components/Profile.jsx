@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Link } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { useApiClient } from "../lib/api.js";
 import { ProfileSkeleton } from "./Skeleton.jsx";
@@ -271,6 +272,13 @@ export default function Profile() {
       <p className="text-muted mb-8">
         {user?.fullName ? `${user.fullName} · ` : ""}Every past session you've completed.
       </p>
+
+      {/* Back home - placed here, right above the sessions list, so it
+         sits directly over the first card rather than at the bottom of
+         the page (unlike the exercise page's placement). */}
+      <Link to="/" className="inline-block mb-6 text-sm font-medium text-muted hover:text-ink transition-colors">
+        ← Back home
+      </Link>
 
       {error && <p className="text-clay">{error}</p>}
 

@@ -1,12 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Link } from "react-router-dom";
 import BreathingOrb from "./BreathingOrb.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
+import { useFocusMode } from "../lib/FocusModeContext.jsx";
 
-// Kept deliberately small - two presets, not a menu. Both use the same
-// underlying "inhale -> hold -> exhale -> hold" cycle shape; "hold2" is
-// simply skipped for presets that don't use a second hold (see `sequence`).
 const PRESETS = {
   box: {
     label: "Box breathing",
@@ -26,9 +24,6 @@ const PRESETS = {
 
 const PHASE_LABEL = { inhale: "Inhale", hold1: "Hold", exhale: "Exhale", hold2: "Hold" };
 
-// The standard 5-4-3-2-1 sensory grounding technique - same wording
-// already used in risk_engine.py's anxiety tips, so a tip that mentions
-// this can now point somewhere that actually walks a person through it.
 const GROUNDING_STEPS = [
   { sense: "see", count: 5, prompt: "Name 5 things you can see" },
   { sense: "touch", count: 4, prompt: "Name 4 things you can touch" },
@@ -42,19 +37,106 @@ const fadeUp = {
   visible: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
 };
 
-/**
- * Shown after either exercise finishes (breathing: on Stop, once at least
- * one cycle completed; grounding: after the last "taste" step). Kept as a
- * simple 3-option check-in rather than a form, so it stays quick to answer
- * even for someone who doesn't have much energy for typing right now.
- */
+// --------------------------------------------------------------------------
+// Small self-contained helpers
+// --------------------------------------------------------------------------
+
+function usePingSound() {
+  const audioCtxRef = useRef(null);
+
+  const play = () => {
+    try {
+      if (!audioCtxRef.current) {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+        audioCtxRef.current = new AudioContextClass();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 528;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.12, ctx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.5);
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start();
+      oscillator.stop(ctx.currentTime + 0.5);
+    } catch {
+      // never let a sound effect break the actual exercise
+    }
+  };
+
+  return play;
+}
+
+function useSpeech() {
+  const speak = (text) => {
+    if (!("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    utterance.rate = 0.95;
+    window.speechSynthesis.speak(utterance);
+  };
+  return speak;
+}
+
+function useWakeLock(active) {
+  const wakeLockRef = useRef(null);
+
+  useEffect(() => {
+    if (!("wakeLock" in navigator)) return;
+
+    const requestLock = async () => {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request("screen");
+      } catch {
+        // not critical - exercise still works without it
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (active && document.visibilityState === "visible") requestLock();
+    };
+
+    if (active) {
+      requestLock();
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().catch(() => {});
+        wakeLockRef.current = null;
+      }
+    };
+  }, [active]);
+}
+
+function StaticBreathingIndicator({ size = 240, label = "Breathe" }) {
+  return (
+    <div
+      className="relative flex items-center justify-center rounded-full"
+      style={{
+        width: size,
+        height: size,
+        background: "radial-gradient(circle at 35% 30%, #4A8A85, #1E4F4C)",
+      }}
+    >
+      <span className="font-body text-xs tracking-[0.2em] uppercase text-white/90">{label}</span>
+    </div>
+  );
+}
+
 function CheckInPrompt({ value, onSelect, onDismiss }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="card p-6 mb-8"
-    >
+    <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="card p-6 mb-8">
       <p className="font-display text-lg text-ink mb-4">How are you feeling now?</p>
 
       <div className="flex flex-wrap gap-3 mb-2">
@@ -86,8 +168,7 @@ function CheckInPrompt({ value, onSelect, onDismiss }) {
             exit={{ opacity: 0, height: 0 }}
             className="text-sm text-ink/80 mt-4 leading-relaxed"
           >
-            {value === "good" &&
-              "Glad to hear it. Carry this steadiness with you today."}
+            {value === "good" && "Glad to hear it. Carry this steadiness with you today."}
             {value === "same" &&
               "That's okay - some days need more than a few minutes of breathing. Talking to a friend or family member can genuinely help too."}
             {value === "difficult" &&
@@ -96,10 +177,7 @@ function CheckInPrompt({ value, onSelect, onDismiss }) {
         )}
       </AnimatePresence>
 
-      <button
-        onClick={onDismiss}
-        className="text-sm font-medium text-muted hover:text-ink transition-colors mt-4"
-      >
+      <button onClick={onDismiss} className="text-sm font-medium text-muted hover:text-ink transition-colors mt-4">
         Dismiss
       </button>
     </motion.div>
@@ -111,11 +189,18 @@ function BreathingSection({ onCompleted }) {
   const [running, setRunning] = useState(false);
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [cycles, setCycles] = useState(0);
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
   const timeoutRef = useRef(null);
+
+  const prefersReducedMotion = useReducedMotion();
+  const playPing = usePingSound();
+  const speak = useSpeech();
 
   const preset = PRESETS[presetKey];
   const sequence = preset.sequence;
   const currentPhase = sequence[phaseIndex];
+
+  useWakeLock(running);
 
   useEffect(() => {
     if (!running) return;
@@ -133,6 +218,23 @@ function BreathingSection({ onCompleted }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [running, phaseIndex, presetKey]);
 
+  useEffect(() => {
+    if (!running || !voiceEnabled) return;
+    speak(PHASE_LABEL[currentPhase]);
+    playPing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [running, currentPhase, voiceEnabled]);
+
+  useEffect(() => {
+    if (!voiceEnabled && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  }, [voiceEnabled]);
+
+  useEffect(() => {
+    return () => {
+      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+    };
+  }, []);
+
   const handleStart = () => {
     setPhaseIndex(0);
     setCycles(0);
@@ -142,10 +244,9 @@ function BreathingSection({ onCompleted }) {
   const handleStop = () => {
     setRunning(false);
     clearTimeout(timeoutRef.current);
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     const didAtLeastOneCycle = cycles >= 1;
     setPhaseIndex(0);
-    // Only trigger the check-in if they actually did something - stopping
-    // immediately after clicking Start shouldn't prompt "how do you feel".
     if (didAtLeastOneCycle) onCompleted();
   };
 
@@ -156,7 +257,7 @@ function BreathingSection({ onCompleted }) {
 
   return (
     <>
-      <div className="flex gap-3 mb-8">
+      <div className="flex gap-3 mb-6">
         {Object.entries(PRESETS).map(([key, p]) => (
           <button
             key={key}
@@ -172,7 +273,30 @@ function BreathingSection({ onCompleted }) {
         ))}
       </div>
 
-      <p className="text-sm text-muted mb-8 max-w-md">{preset.description}</p>
+      <p className="text-sm text-muted mb-6 max-w-md">{preset.description}</p>
+
+      <div className="flex items-center gap-3 mb-2">
+        <button
+          onClick={() => setVoiceEnabled((v) => !v)}
+          role="switch"
+          aria-checked={voiceEnabled}
+          className={`relative w-11 h-6 rounded-full transition-colors ${voiceEnabled ? "bg-teal" : "bg-mist"}`}
+        >
+          <span
+            className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+              voiceEnabled ? "translate-x-5" : ""
+            }`}
+          />
+        </button>
+        <span className="text-sm font-medium text-ink">Voice guidance</span>
+      </div>
+
+      {voiceEnabled && (
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-sm text-muted mb-8">
+          Start the exercise and close your eyes - you'll hear each step spoken aloud.
+        </motion.p>
+      )}
+      {!voiceEnabled && <div className="mb-8" />}
 
       {running && (
         <motion.p
@@ -186,7 +310,11 @@ function BreathingSection({ onCompleted }) {
       )}
 
       <div className="flex justify-center mb-10">
-        <BreathingOrb size={240} phase={running ? currentPhase : null} durations={preset.durations} />
+        {prefersReducedMotion ? (
+          <StaticBreathingIndicator size={240} label={running ? PHASE_LABEL[currentPhase] : "Breathe"} />
+        ) : (
+          <BreathingOrb size={240} phase={running ? currentPhase : null} durations={preset.durations} />
+        )}
       </div>
 
       <div className="flex items-center justify-center gap-4 mb-6">
@@ -205,9 +333,7 @@ function BreathingSection({ onCompleted }) {
             Stop
           </button>
         )}
-      </div>
-
-     
+      </div>  
     </>
   );
 }
@@ -279,10 +405,7 @@ function GroundingSection({ onCompleted }) {
           {isLastStep ? "Finish" : "Next"}
         </button>
         {stepIndex > 0 && (
-          <button
-            onClick={handleRestart}
-            className="text-sm font-medium text-muted hover:text-ink transition-colors"
-          >
+          <button onClick={handleRestart} className="text-sm font-medium text-muted hover:text-ink transition-colors">
             Start over
           </button>
         )}
@@ -294,9 +417,19 @@ function GroundingSection({ onCompleted }) {
 export default function ExercisePage() {
   usePageTitle("Exercises");
 
+  const { focusMode, setFocusMode } = useFocusMode();
   const [mode, setMode] = useState("breathing");
   const [checkInVisible, setCheckInVisible] = useState(false);
   const [checkInValue, setCheckInValue] = useState(null);
+
+  // Safety net: if someone navigates away from this page by any means
+  // other than clicking "Exit focus mode" (browser back, closing the tab
+  // and returning later via history, etc.), this guarantees the Navbar
+  // comes back on every other page rather than staying hidden globally.
+  useEffect(() => {
+    return () => setFocusMode(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleModeChange = (m) => {
     setCheckInVisible(false);
@@ -315,16 +448,26 @@ export default function ExercisePage() {
   };
 
   return (
-    <div className="max-w-2xl mx-auto px-6 pt-14 pb-24">
+    <div className={`max-w-2xl mx-auto px-6 pb-24 ${focusMode ? "pt-20" : "pt-14"}`}>
       <motion.div initial="hidden" animate="visible" variants={fadeUp}>
-        <span className="font-mono text-xs text-teal">A quiet pause</span>
-        <h1 className="font-display text-3xl text-ink mt-2 mb-2">Exercises</h1>
+        <div className="flex items-start justify-between gap-4 mb-2">
+          <div>
+            <span className="font-mono text-xs text-teal">A quiet pause</span>
+            <h1 className="font-display text-3xl text-ink mt-2 mb-2">Exercises</h1>
+          </div>
+          <button
+            onClick={() => setFocusMode(!focusMode)}
+            className="shrink-0 px-4 py-2 rounded-full text-sm font-medium border border-teal/30 text-muted hover:text-ink hover:bg-teal-light/30 transition-colors"
+          >
+            {focusMode ? "Exit focus mode" : "Focus mode"}
+          </button>
+        </div>
+
         <p className="text-muted mb-8 max-w-xl">
           Short, guided exercises you can return to any time - before an
           assessment, after one, or whenever you need a moment.
         </p>
 
-        {/* Mode tabs */}
         <div className="flex gap-3 mb-8">
           {[
             { key: "breathing", label: "Breathing" },
@@ -361,9 +504,11 @@ export default function ExercisePage() {
           </p>
         </div>
 
-        <Link to="/" className="inline-block mt-8 text-sm font-medium text-muted hover:text-ink transition-colors">
-          ← Back home
-        </Link>
+        {!focusMode && (
+          <Link to="/" className="inline-block mt-8 text-sm font-medium text-muted hover:text-ink transition-colors">
+            ← Back home
+          </Link>
+        )}
       </motion.div>
     </div>
   );

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/clerk-react";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { useTheme } from "../lib/ThemeContext.jsx";
+import { useFocusMode } from "../lib/FocusModeContext.jsx";
 import ExitConfirmModal from "./ExitConfirmModal.jsx";
 
 function ThemeToggle() {
@@ -60,6 +61,7 @@ function MenuIcon({ open }) {
 export default function Navbar() {
   const navigate = useNavigate();
   const { state, reset } = useAssessment();
+  const { focusMode } = useFocusMode();
   const [pendingPath, setPendingPath] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -116,6 +118,11 @@ export default function Navbar() {
   };
 
   const cancelLeave = () => setPendingPath(null);
+
+  // Placed after every hook above (never before) so this stays compliant
+  // with the rules of hooks - hooks always run on every render regardless
+  // of focusMode, only the actual JSX output is skipped.
+  if (focusMode) return null;
 
   return (
     <>
