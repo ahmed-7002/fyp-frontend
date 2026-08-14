@@ -1,8 +1,20 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Link } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+} from "recharts";
 import { useApiClient } from "../lib/api.js";
+import { useTheme } from "../lib/ThemeContext.jsx";
 import { ProfileSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
 import DeleteConfirmToast from "./DeleteConfirmToast.jsx";
@@ -30,6 +42,12 @@ const MODE_LABEL = {
   combined: "Combined",
 };
 
+const MODE_BADGE_LABEL = {
+  questionnaire: "Questions",
+  video: "Video",
+  combined: "Combined",
+};
+
 const EMOTION_COLORS = {
   happy: "#2B6F6B",
   neutral: "#8C7AA9",
@@ -40,6 +58,19 @@ const EMOTION_COLORS = {
   disgust: "#7A5A4A",
 };
 
+// Mirrors app/services/risk_engine.py's _SEVERITY_WEIGHT, so "worst
+// subscale" and ring-fill logic here agree with how the backend already
+// reasons about severity ordering.
+const SEVERITY_WEIGHT = { Normal: 0, Mild: 1, Moderate: 2, Severe: 3, "Extremely Severe": 4 };
+const RISK_WEIGHT = { Low: 1, Moderate: 2, High: 3, "Needs Attention": 4 };
+
+const TIME_RANGES = [
+  { key: "7d", label: "Last 7 Days", days: 7 },
+  { key: "30d", label: "Last 30 Days", days: 30 },
+  { key: "90d", label: "Last 90 Days", days: 90 },
+  { key: "all", label: "All Time", days: null },
+];
+
 function formatDate(iso) {
   return new Date(iso).toLocaleString(undefined, {
     year: "numeric",
@@ -48,6 +79,404 @@ function formatDate(iso) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatShortDate(iso) {
+  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/**
+ * Resolves this project's CSS-variable-driven theme colors (see
+ * tailwind.config.js - colors read from --color-teal etc., defined
+ * separately for :root and .dark) into literal "rgb(r g b)" strings.
+ *
+ * This is necessary because Recharts/SVG color props need real color
+ * values, not Tailwind class names - and while modern browsers do support
+ * var() in SVG presentation attributes, reading getComputedStyle directly
+ * here is the most reliable way to guarantee chart colors update the
+ * instant dark mode is toggled, without depending on attribute-level var()
+ * support. Re-reads whenever `theme` changes.
+ */
+function useThemeColors() {
+  const { theme } = useTheme();
+  const [colors, setColors] = useState({});
+
+  useEffect(() => {
+    const styles = getComputedStyle(document.documentElement);
+    const read = (name) => {
+      const raw = styles.getPropertyValue(name).trim();
+      return raw ? `rgb(${raw})` : "#8C7AA9"; // safe fallback, shouldn't normally trigger
+    };
+    setColors({
+      teal: read("--color-teal"),
+      tealDark: read("--color-teal-dark"),
+      tealLight: read("--color-teal-light"),
+      lavender: read("--color-lavender"),
+      clay: read("--color-clay"),
+      ink: read("--color-ink"),
+      muted: read("--color-muted"),
+      mist: read("--color-mist"),
+    });
+  }, [theme]);
+
+  return colors;
+}
+
+function severityStrokeColor(severity, colors) {
+  // Same family associations as SEVERITY_COLOR above, just resolved to
+  // real color values instead of Tailwind classes.
+  switch (severity) {
+    case "Normal":
+      return colors.teal;
+    case "Mild":
+      return colors.lavender;
+    case "Moderate":
+    case "Severe":
+      return colors.clay;
+    case "Extremely Severe":
+      return colors.ink;
+    default:
+      return colors.muted;
+  }
+}
+
+function riskStrokeColor(risk, colors) {
+  switch (risk) {
+    case "Low":
+      return colors.teal;
+    case "Moderate":
+      return colors.lavender;
+    case "High":
+      return colors.clay;
+    case "Needs Attention":
+      return colors.ink;
+    default:
+      return colors.muted;
+  }
+}
+
+/** Whichever of the three DASS-21 subscales is currently most severe -
+ * same "take the max" idea risk_engine.py already uses for overall risk. */
+function worstDassSubscale(dass) {
+  if (!dass) return null;
+  const candidates = [
+    { name: "Depression", score: dass.depression_score, severity: dass.depression_severity },
+    { name: "Anxiety", score: dass.anxiety_score, severity: dass.anxiety_severity },
+    { name: "Stress", score: dass.stress_score, severity: dass.stress_severity },
+  ];
+  return candidates.reduce((worst, c) =>
+    SEVERITY_WEIGHT[c.severity] > SEVERITY_WEIGHT[worst.severity] ? c : worst
+  );
+}
+
+/** A single comparable number per session, used for both the trend
+ * indicator and the "how full is the ring" calculation. DASS-bearing
+ * sessions use the sum of all three raw subscale scores (an interpretive
+ * choice - the brief asked for one combined "Overall Progress" line, and
+ * DASS-21 has three subscales, so this collapses them into one trackable
+ * total). Video-only sessions fall back to the dominant emotion's
+ * percentage, since they have no DASS score at all. */
+function sessionTrackScore(detail) {
+  if (detail.dass_result) {
+    const d = detail.dass_result;
+    return d.depression_score + d.anxiety_score + d.stress_score;
+  }
+  if (detail.fer_result && detail.fer_result.frames_analyzed > 0) {
+    return detail.fer_result[detail.fer_result.dominant_emotion] ?? 0;
+  }
+  return null;
+}
+
+function InfoIcon({ label }) {
+  return (
+    <span title={label} aria-label={label} className="text-muted/70 hover:text-muted transition-colors cursor-help">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+        <path d="M12 11v5.5M12 8v.01" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
+
+function TrendIndicator({ delta }) {
+  if (delta === null) {
+    return <span className="text-xs text-muted">First session</span>;
+  }
+  if (delta === 0) {
+    return <span className="text-xs text-muted">= No change</span>;
+  }
+  const improving = delta < 0; // lower DASS/negative-emotion score = improvement
+  return (
+    <span className={`text-xs font-medium flex items-center gap-1 ${improving ? "text-teal-dark" : "text-clay"}`}>
+      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" style={{ transform: improving ? "none" : "scaleY(-1)" }}>
+        <path d="M6 15l6-6 6 6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      {improving ? delta : `+${delta}`} pts from last
+    </span>
+  );
+}
+
+/** Hand-rolled SVG ring rather than another Recharts component - simpler
+ * to control precisely at this small size, and the brief explicitly
+ * allowed "a donut chart or thick SVG circle". */
+function RadialScore({ value, percent, color, size = 64 }) {
+  const strokeWidth = 6;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - Math.min(Math.max(percent, 0), 100) / 100);
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none" stroke="currentColor" className="text-mist" strokeWidth={strokeWidth} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="font-display text-sm text-ink">{value}</span>
+      </div>
+    </div>
+  );
+}
+
+function AssessmentCard({ session, detail, trendDelta, colors }) {
+  const dassWorst = worstDassSubscale(detail.dass_result);
+  const hasDass = !!dassWorst;
+
+  const severityText = hasDass ? `${dassWorst.severity} ${dassWorst.name}` : `${session.final_risk_level} Risk`;
+  const ringColor = hasDass ? severityStrokeColor(dassWorst.severity, colors) : riskStrokeColor(session.final_risk_level, colors);
+  const ringPercent = hasDass
+    ? (SEVERITY_WEIGHT[dassWorst.severity] / 4) * 100
+    : (RISK_WEIGHT[session.final_risk_level] / 4) * 100;
+  const ringValue = hasDass
+    ? dassWorst.score
+    : detail.fer_result
+    ? Math.round(detail.fer_result[detail.fer_result.dominant_emotion] ?? 0)
+    : "-";
+
+  return (
+    <div className="card p-6 rounded-2xl">
+      <div className="flex items-center justify-between mb-5">
+        <span className="text-xs text-muted font-mono">{formatDate(session.created_at)}</span>
+        <span
+          className={`text-[11px] font-medium px-2.5 py-1 rounded-full ${
+            RISK_COLOR[session.final_risk_level] || "bg-mist text-muted"
+          }`}
+        >
+          {MODE_BADGE_LABEL[session.assessment_mode] || session.assessment_mode}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-4">
+        <RadialScore value={ringValue} percent={ringPercent} color={ringColor} />
+        <div>
+          <p className="font-display text-base text-ink leading-snug">{severityText}</p>
+          <div className="mt-1">
+            <TrendIndicator delta={trendDelta} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChartCard({ title, infoLabel, children }) {
+  return (
+    <div className="card p-6 rounded-2xl">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-display text-lg text-ink">{title}</h3>
+        <InfoIcon label={infoLabel} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function EmptyChartState({ message }) {
+  return <div className="h-56 flex items-center justify-center text-sm text-muted">{message}</div>;
+}
+
+/**
+ * The new Insights layout: header + filter, two charts, then a preview
+ * grid of recent assessment cards. Sits above the existing full session
+ * list (which is untouched below) - "View All" scrolls down to it rather
+ * than linking to a separate route, since this app only has one /profile
+ * page today.
+ */
+function InsightsSection({ fullSessions, loading, onViewAllClick }) {
+  const colors = useThemeColors();
+  const [rangeKey, setRangeKey] = useState("30d");
+
+  const filtered = useMemo(() => {
+    const range = TIME_RANGES.find((r) => r.key === rangeKey);
+    if (!range || range.days === null) return fullSessions;
+    const cutoff = Date.now() - range.days * 24 * 60 * 60 * 1000;
+    return fullSessions.filter((s) => new Date(s.created_at).getTime() >= cutoff);
+  }, [fullSessions, rangeKey]);
+
+  // Line/area chart data - questionnaire + combined sessions only, each
+  // point being the combined DASS total (see sessionTrackScore above).
+  const progressData = useMemo(() => {
+    return filtered
+      .filter((s) => (s.assessment_mode === "questionnaire" || s.assessment_mode === "combined") && s.dass_result)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map((s) => ({
+        date: formatShortDate(s.created_at),
+        score: s.dass_result.depression_score + s.dass_result.anxiety_score + s.dass_result.stress_score,
+      }));
+  }, [filtered]);
+
+  // Bar chart data - video + combined sessions only, counting how many
+  // sessions had each emotion as their dominant one.
+  const emotionData = useMemo(() => {
+    const counts = {};
+    filtered
+      .filter((s) => (s.assessment_mode === "video" || s.assessment_mode === "combined") && s.fer_result && s.fer_result.frames_analyzed > 0)
+      .forEach((s) => {
+        const emo = s.fer_result.dominant_emotion;
+        counts[emo] = (counts[emo] || 0) + 1;
+      });
+    return Object.entries(counts).map(([emotion, count]) => ({
+      emotion: emotion.charAt(0).toUpperCase() + emotion.slice(1),
+      count,
+    }));
+  }, [filtered]);
+
+  // Recent cards - most recent 6, each with a trend computed against the
+  // previous session of the SAME comparable type (DASS-bearing vs
+  // video-only), so a DASS score is never compared against an FER
+  // percentage.
+  const recentCards = useMemo(() => {
+    const sorted = [...filtered].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    return sorted.slice(0, 6).map((session) => {
+      const currentScore = sessionTrackScore(session);
+      const sameTypeEarlier = sorted.find(
+        (s) =>
+          new Date(s.created_at) < new Date(session.created_at) &&
+          !!s.dass_result === !!session.dass_result
+      );
+      const prevScore = sameTypeEarlier ? sessionTrackScore(sameTypeEarlier) : null;
+      const trendDelta = currentScore !== null && prevScore !== null ? currentScore - prevScore : null;
+      return { session, detail: session, trendDelta };
+    });
+  }, [filtered]);
+
+  return (
+    <section className="mb-12">
+      <div className="flex items-start justify-between flex-wrap gap-4 mb-6">
+        <div>
+          <h2 className="font-display text-2xl md:text-3xl text-ink font-bold">Insights</h2>
+          <p className="text-muted text-sm mt-1">Track your progress and assessment analytics.</p>
+        </div>
+        <select
+          value={rangeKey}
+          onChange={(e) => setRangeKey(e.target.value)}
+          className="px-4 py-2 rounded-full border border-teal/30 text-sm font-medium text-muted bg-transparent hover:text-ink hover:bg-teal-light/30 transition-colors cursor-pointer"
+        >
+          {TIME_RANGES.map((r) => (
+            <option key={r.key} value={r.key}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="grid md:grid-cols-2 gap-6 mb-10">
+          <div className="card p-6 rounded-2xl h-72 animate-pulse bg-mist/40" />
+          <div className="card p-6 rounded-2xl h-72 animate-pulse bg-mist/40" />
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-6 mb-10">
+          <ChartCard title="Overall Progress" infoLabel="Combined DASS-21 total (depression + anxiety + stress) across question-based and combined sessions.">
+            {progressData.length === 0 ? (
+              <EmptyChartState message="No question-based sessions in this range yet." />
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <AreaChart data={progressData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="progressFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={colors.teal} stopOpacity={0.35} />
+                      <stop offset="100%" stopColor={colors.teal} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} stroke={colors.mist} />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={28} />
+                  <Tooltip
+                    contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
+                    labelStyle={{ color: colors.ink }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="score"
+                    stroke={colors.teal}
+                    strokeWidth={2.5}
+                    fill="url(#progressFill)"
+                    dot={{ r: 4, fill: colors.teal, strokeWidth: 0 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="Facial Emotion Summary" infoLabel="How often each dominant expression appeared, across video and combined sessions.">
+            {emotionData.length === 0 ? (
+              <EmptyChartState message="No video sessions in this range yet." />
+            ) : (
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={emotionData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                  <CartesianGrid vertical={false} stroke={colors.mist} />
+                  <XAxis dataKey="emotion" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={28} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
+                    labelStyle={{ color: colors.ink }}
+                  />
+                  <Bar dataKey="count" fill={colors.teal} radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="font-display text-xl text-ink font-bold">Recent Assessments</h2>
+        <button onClick={onViewAllClick} className="text-sm font-medium text-teal hover:text-teal-dark transition-colors">
+          View All →
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="card p-6 rounded-2xl h-32 animate-pulse bg-mist/40" />
+          ))}
+        </div>
+      ) : recentCards.length === 0 ? (
+        <div className="card p-8 text-center rounded-2xl">
+          <p className="text-muted text-sm">No sessions in this range yet.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {recentCards.map(({ session, detail, trendDelta }) => (
+            <AssessmentCard key={session.id} session={session} detail={detail} trendDelta={trendDelta} colors={colors} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 /**
@@ -220,6 +649,20 @@ export default function Profile() {
   const [sessions, setSessions] = useState(null);
   const [error, setError] = useState("");
 
+  // --- Insights data: full detail for every session, fetched in parallel
+  // once the summary list has loaded. This is the "simplest frontend"
+  // approach explicitly chosen over adding a new richer backend endpoint -
+  // worth knowing it means one extra request per session on every profile
+  // load, which is fine for a modest session count but would be worth
+  // revisiting (a dedicated summary-with-scores endpoint) if this list
+  // grows very large. Partial failures don't break the whole page - a
+  // session whose detail fetch fails is just left out of fullSessions
+  // rather than crashing the Insights section.
+  const [fullSessions, setFullSessions] = useState([]);
+  const [insightsLoading, setInsightsLoading] = useState(true);
+
+  const allSessionsRef = useRef(null);
+
   // --- Delete flow state --------------------------------------------------
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [deleting, setDeleting] = useState(false);
@@ -239,6 +682,29 @@ export default function Profile() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    if (!sessions) return;
+    if (sessions.length === 0) {
+      setInsightsLoading(false);
+      return;
+    }
+    let mounted = true;
+    setInsightsLoading(true);
+    Promise.allSettled(sessions.map((s) => api.get(`/api/assessments/${s.id}`)))
+      .then((results) => {
+        if (!mounted) return;
+        const merged = results
+          .map((r, i) => (r.status === "fulfilled" ? { ...sessions[i], ...r.value.data } : null))
+          .filter(Boolean);
+        setFullSessions(merged);
+      })
+      .finally(() => mounted && setInsightsLoading(false));
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions]);
+
   const requestDelete = (id) => {
     setDeleteError("");
     setPendingDeleteId(id);
@@ -257,6 +723,7 @@ export default function Profile() {
     try {
       await api.delete(`/api/assessments/${pendingDeleteId}`);
       setSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
+      setFullSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
       setPendingDeleteId(null);
       setSuccessMessage("Session deleted");
     } catch {
@@ -266,23 +733,29 @@ export default function Profile() {
     }
   };
 
+  const scrollToAllSessions = () => {
+    allSessionsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
-    <div className="max-w-3xl mx-auto px-6 pt-16 pb-24">
+    <div className="max-w-5xl mx-auto px-6 pt-16 pb-24">
       <h1 className="font-display text-3xl text-ink mb-1">Your profile</h1>
       <p className="text-muted mb-8">
         {user?.fullName ? `${user.fullName} · ` : ""}Every past session you've completed.
       </p>
 
-      {/* Back home - placed here, right above the sessions list, so it
-         sits directly over the first card rather than at the bottom of
-         the page (unlike the exercise page's placement). */}
-      <Link to="/" className="inline-block mb-6 text-sm font-medium text-muted hover:text-ink transition-colors">
+      {/* Back home - kept above everything, including Insights */}
+      <Link to="/" className="inline-block mb-8 text-sm font-medium text-muted hover:text-ink transition-colors">
         ← Back home
       </Link>
 
       {error && <p className="text-clay">{error}</p>}
 
       {!sessions && !error && <ProfileSkeleton />}
+
+      {sessions && sessions.length > 0 && (
+        <InsightsSection fullSessions={fullSessions} loading={insightsLoading} onViewAllClick={scrollToAllSessions} />
+      )}
 
       {sessions && sessions.length === 0 && (
         <div className="card p-8 text-center">
@@ -291,10 +764,13 @@ export default function Profile() {
       )}
 
       {sessions && sessions.length > 0 && (
-        <div className="space-y-3">
-          {sessions.map((session) => (
-            <SessionRow key={session.id} session={session} api={api} onRequestDelete={requestDelete} />
-          ))}
+        <div ref={allSessionsRef}>
+          <h2 className="font-display text-xl text-ink font-bold mb-5">All Sessions</h2>
+          <div className="space-y-3">
+            {sessions.map((session) => (
+              <SessionRow key={session.id} session={session} api={api} onRequestDelete={requestDelete} />
+            ))}
+          </div>
         </div>
       )}
 
