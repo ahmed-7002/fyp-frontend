@@ -12,7 +12,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
 } from "recharts";
 import { useApiClient } from "../lib/api.js";
 import { useTheme } from "../lib/ThemeContext.jsx";
@@ -319,6 +318,11 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
   const [filtered, setFiltered] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  // When set to "depression" | "anxiety" | "stress", only that line is
+  // drawn on the Overall Progress chart (the other two are hidden). Reset
+  // to null - showing all three again - via the clear ("x") button or by
+  // clicking the same color a second time.
+  const [isolatedLine, setIsolatedLine] = useState(null);
 
   // Single range-filtered, column-trimmed request per range change -
   // replaces the old "fetch full detail for every session, then filter by
@@ -329,6 +333,7 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
     let mounted = true;
     setLoading(true);
     setError("");
+    setIsolatedLine(null);
     api
       .get(`/api/assessments/insights?range=${rangeKey}`)
       .then((res) => mounted && setFiltered(res.data))
@@ -396,6 +401,15 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
     });
   }, [filtered]);
 
+  // Single source of truth for the three DASS-21 lines - drives both the
+  // clickable legend buttons and the <Line> components below, so colors
+  // and labels can't drift apart between the two.
+  const DASS_LINES = [
+    { key: "depression", label: "Depression", color: colors.teal },
+    { key: "anxiety", label: "Anxiety", color: colors.lavender },
+    { key: "stress", label: "Stress", color: colors.clay },
+  ];
+
   return (
     <section className="mb-12">
       <div className="flex items-start justify-between flex-wrap gap-4 mb-6">
@@ -426,59 +440,79 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
       ) : (
         <div className="grid md:grid-cols-2 gap-6 mb-10">
           <ChartCard
-            title="Overall Progress"
+            title="Questionnaire Progress Summary"
             infoLabel="DASS-21 scores for depression, anxiety, and stress across question-based and combined sessions."
           >
             {progressData.length === 0 ? (
               <EmptyChartState message="No question-based sessions in this range yet." />
             ) : (
-              <ResponsiveContainer width="100%" height={240}>
-                <LineChart data={progressData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
-                  <CartesianGrid vertical={false} stroke={colors.mist} />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
-                  {/* Positive width + non-negative chart margin so tick labels
-                      (incl. their leading digit) render fully inside the card
-                      instead of being clipped by the card's own border/padding. */}
-                  <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={34} />
-                  <Tooltip
-                    contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
-                    labelStyle={{ color: colors.ink }}
-                  />
-                  <Legend
-                    verticalAlign="top"
-                    height={28}
-                    iconType="circle"
-                    wrapperStyle={{ fontSize: 11, color: colors.muted }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="depression"
-                    name="Depression"
-                    stroke={colors.teal}
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: colors.teal, strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="anxiety"
-                    name="Anxiety"
-                    stroke={colors.lavender}
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: colors.lavender, strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="stress"
-                    name="Stress"
-                    stroke={colors.clay}
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: colors.clay, strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <>
+                {/* Custom legend: click a color to isolate that line (the
+                    other two hide); click it again, or hit the x, to bring
+                    all three back. Built by hand instead of recharts'
+                    <Legend onClick> so we get an explicit clear button and
+                    full control over the "dimmed" styling. */}
+                <div className="flex items-center flex-wrap gap-2 mb-3">
+                  {DASS_LINES.map((line) => {
+                    const isDimmed = isolatedLine !== null && isolatedLine !== line.key;
+                    return (
+                      <button
+                        key={line.key}
+                        type="button"
+                        onClick={() => setIsolatedLine((prev) => (prev === line.key ? null : line.key))}
+                        aria-pressed={isolatedLine === line.key}
+                        className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full transition-opacity hover:opacity-100 ${
+                          isDimmed ? "opacity-40" : "opacity-100"
+                        }`}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: line.color }} />
+                        <span style={{ color: colors.muted }}>{line.label}</span>
+                      </button>
+                    );
+                  })}
+                  {isolatedLine && (
+                    <button
+                      type="button"
+                      onClick={() => setIsolatedLine(null)}
+                      aria-label="Show all lines"
+                      title="Show all lines"
+                      className="flex items-center justify-center w-5 h-5 rounded-full text-muted hover:text-ink hover:bg-mist transition-colors"
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+                        <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={progressData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
+                    <CartesianGrid vertical={false} stroke={colors.mist} />
+                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
+                    {/* Positive width + non-negative chart margin so tick labels
+                        (incl. their leading digit) render fully inside the card
+                        instead of being clipped by the card's own border/padding. */}
+                    <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={34} />
+                    <Tooltip
+                      contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
+                      labelStyle={{ color: colors.ink }}
+                    />
+                    {DASS_LINES.map((line) => (
+                      <Line
+                        key={line.key}
+                        type="monotone"
+                        dataKey={line.key}
+                        name={line.label}
+                        stroke={line.color}
+                        strokeWidth={2.5}
+                        dot={{ r: 3, fill: line.color, strokeWidth: 0 }}
+                        activeDot={{ r: 5 }}
+                        hide={isolatedLine !== null && isolatedLine !== line.key}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </>
             )}
           </ChartCard>
 
@@ -487,9 +521,13 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
               <EmptyChartState message="No video sessions in this range yet." />
             ) : (
               <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={emotionData} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+                <BarChart data={emotionData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                   <CartesianGrid vertical={false} stroke={colors.mist} />
                   <XAxis dataKey="emotion" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
+                  {/* Same fix as Overall Progress's YAxis: non-negative
+                      chart margin + wider axis width so tick numbers
+                      render fully instead of being clipped by the card's
+                      own border/padding. */}
                   <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={28} allowDecimals={false} />
                   <Tooltip
                     contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
