@@ -440,7 +440,7 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
       ) : (
         <div className="grid md:grid-cols-2 gap-6 mb-10">
           <ChartCard
-            title="Questionnaire Progress Summary"
+            title="Questionnaire Summary"
             infoLabel="DASS-21 scores for depression, anxiety, and stress across question-based and combined sessions."
           >
             {progressData.length === 0 ? (
