@@ -184,8 +184,10 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop nav (md and up) - inline links, unchanged pattern, with
-           Exercises added. Hidden below md in favour of the hamburger. */}
+           Exercises added. Hidden below md in favour of the hamburger.
+           Order: theme toggle, then Exercises, then sign-in/Profile. */}
         <nav className="hidden md:flex items-center gap-4">
+          <ThemeToggle />
           <Link
             to="/exercises"
             onClick={(e) => handleNavClick(e, "/exercises")}
@@ -193,7 +195,6 @@ export default function Navbar() {
           >
             Exercises
           </Link>
-          <ThemeToggle />
           <SignedOut>
             <SignInButton mode="modal">
               <button className="text-sm font-medium text-muted hover:text-ink transition-colors">
