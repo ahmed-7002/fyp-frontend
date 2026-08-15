@@ -386,7 +386,12 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
           !!s.dass_result === !!session.dass_result
       );
       const prevScore = sameTypeEarlier ? sessionTrackScore(sameTypeEarlier) : null;
-      const trendDelta = currentScore !== null && prevScore !== null ? currentScore - prevScore : null;
+      // Rounded to a whole number: DASS subscale scores are already ints,
+      // but FER dominant-emotion percentages are floats, so a plain
+      // subtraction (e.g. 62.34 - 58.56) can surface binary floating-point
+      // noise like 3.780000000000001 instead of a clean 3.78/4.
+      const trendDelta =
+        currentScore !== null && prevScore !== null ? Math.round(currentScore - prevScore) : null;
       return { session, detail: session, trendDelta };
     });
   }, [filtered]);

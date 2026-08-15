@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
@@ -50,6 +50,11 @@ export default function OnboardingForm() {
 
   return (
     <div className="max-w-md mx-auto px-6 pt-16 pb-24">
+      {/* Back home - same placement/style as the Profile page */}
+      <Link to="/" className="inline-block mb-8 text-sm font-medium text-muted hover:text-ink transition-colors">
+        ← Back home
+      </Link>
+
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
