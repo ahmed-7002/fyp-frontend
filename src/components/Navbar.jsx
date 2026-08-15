@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { SignedIn, SignedOut, UserButton, SignInButton } from "@clerk/clerk-react";
+import { SignedIn, SignedOut, UserButton, SignInButton, useUser } from "@clerk/clerk-react";
 import { useAssessment } from "../lib/AssessmentContext.jsx";
 import { useTheme } from "../lib/ThemeContext.jsx";
 import { useFocusMode } from "../lib/FocusModeContext.jsx";
+import { useApiClient } from "../lib/api.js";
+import { prefetchSessions } from "../lib/sessionsStore.js";
 import ExitConfirmModal from "./ExitConfirmModal.jsx";
 
 function ThemeToggle() {
@@ -62,8 +64,42 @@ export default function Navbar() {
   const navigate = useNavigate();
   const { state, reset } = useAssessment();
   const { focusMode } = useFocusMode();
+  const { isSignedIn } = useUser();
+  const api = useApiClient();
   const [pendingPath, setPendingPath] = useState(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Eager background prefetch: warms the assessments-list cache the
+  // moment the app loads for a signed-in visitor, rather than waiting for
+  // a hover/focus on the Profile link. This is what actually helps mobile
+  // web app users - there's no "hover" on a touchscreen, so the
+  // onMouseEnter/onFocus prefetch below rarely gets a real head start
+  // there. This effect covers everyone the same way regardless of input
+  // method.
+  //
+  // Scheduled via requestIdleCallback (falling back to a short setTimeout
+  // on browsers without it, e.g. Safari) so it doesn't compete with more
+  // urgent requests during initial load/render - it still finishes long
+  // before someone would realistically tap into Profile.
+  useEffect(() => {
+    if (!isSignedIn) return;
+
+    const scheduleIdle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
+    const cancelIdle = window.cancelIdleCallback || clearTimeout;
+
+    const handle = scheduleIdle(() => {
+      // prefetchSessions() itself de-dupes, so this is a no-op if a
+      // hover/focus (or a previous mount of this effect) already
+      // started/finished the same request.
+      prefetchSessions(api).catch(() => {
+        // Swallow errors from this speculative load - Profile's own
+        // mount-time fetch will retry and show its usual error state if
+        // the user actually navigates there and it's still failing.
+      });
+    });
+
+    return () => cancelIdle(handle);
+  }, [isSignedIn, api]);
 
   // Intercepts navbar navigation while a session is actively in progress
   // (unsaved), so a stray click doesn't silently wipe someone's answers.
@@ -75,6 +111,21 @@ export default function Navbar() {
       setPendingPath(path);
     }
     setMobileOpen(false);
+  };
+
+  // Hover/focus-prefetch: warms the assessments-list cache the moment
+  // someone's cursor lands on (or keyboard focus reaches) the Profile
+  // link, so by the time they actually click, Profile.jsx's own fetch on
+  // mount finds the data already cached (or its request already
+  // in-flight) instead of starting from zero. See lib/sessionsStore.js
+  // for the de-duping logic that makes this safe to call speculatively.
+  const handleProfileHover = () => {
+    prefetchSessions(api).catch(() => {
+      // Swallow errors from a speculative prefetch - if this hover-driven
+      // request fails, Profile's own mount-time fetch will retry and
+      // surface its usual error state; a hover that never leads to a
+      // click shouldn't need to report anything to the user.
+    });
   };
 
   // --- Native browser back button / swipe-back interception -------------
@@ -154,6 +205,8 @@ export default function Navbar() {
             <Link
               to="/profile"
               onClick={(e) => handleNavClick(e, "/profile")}
+              onMouseEnter={handleProfileHover}
+              onFocus={handleProfileHover}
               className="text-sm font-medium text-muted hover:text-ink transition-colors"
             >
               Profile
@@ -211,6 +264,7 @@ export default function Navbar() {
               <Link
                 to="/profile"
                 onClick={(e) => handleNavClick(e, "/profile")}
+                onFocus={handleProfileHover}
                 className="py-2.5 text-sm font-medium text-muted hover:text-ink transition-colors"
               >
                 Profile

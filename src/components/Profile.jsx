@@ -14,6 +14,7 @@ import {
   Tooltip,
 } from "recharts";
 import { useApiClient } from "../lib/api.js";
+import { getCachedSessions, prefetchSessions, setCachedSessions } from "../lib/sessionsStore.js";
 import { useTheme } from "../lib/ThemeContext.jsx";
 import { ProfileSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
@@ -440,7 +441,7 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
       ) : (
         <div className="grid md:grid-cols-2 gap-6 mb-10">
           <ChartCard
-            title="Questionnaire Summary"
+            title="Overall Progress"
             infoLabel="DASS-21 scores for depression, anxiety, and stress across question-based and combined sessions."
           >
             {progressData.length === 0 ? (
@@ -736,7 +737,10 @@ export default function Profile() {
   const api = useApiClient();
   usePageTitle("Your Profile");
 
-  const [sessions, setSessions] = useState(null);
+  // Lazy initializer: if Navbar's onMouseEnter/onFocus already warmed the
+  // cache before this page mounted, this renders the real list on the
+  // very first paint - no loading skeleton flash at all.
+  const [sessions, setSessions] = useState(() => getCachedSessions());
   const [error, setError] = useState("");
 
   const allSessionsRef = useRef(null);
@@ -753,11 +757,15 @@ export default function Profile() {
 
   useEffect(() => {
     let mounted = true;
-    api
-      .get("/api/assessments")
-      .then((res) => mounted && setSessions(res.data))
-      .catch(() => mounted && setError("Couldn't load your past sessions."))
-      .finally(() => {});
+    // prefetchSessions() resolves instantly from cache if Navbar already
+    // fetched this on hover/focus, reuses that same in-flight request if
+    // it's still pending, or - if neither happened - starts a fresh GET
+    // right here. Either way this component only ever fires at most one
+    // network request of its own, never a duplicate of a hover-triggered
+    // one.
+    prefetchSessions(api)
+      .then((data) => mounted && setSessions(data))
+      .catch(() => mounted && setError("Couldn't load your past sessions."));
     return () => {
       mounted = false;
     };
@@ -781,7 +789,14 @@ export default function Profile() {
     setDeleteError("");
     try {
       await api.delete(`/api/assessments/${pendingDeleteId}`);
-      setSessions((prev) => prev.filter((s) => s.id !== pendingDeleteId));
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== pendingDeleteId);
+        // Sync the shared cache too - otherwise a hover over the Navbar
+        // Profile link right after this delete would instantly show the
+        // pre-delete list again (cache still holding the old array).
+        setCachedSessions(next);
+        return next;
+      });
       setInsightsRefreshToken((t) => t + 1);
       setPendingDeleteId(null);
       setSuccessMessage("Session deleted");
