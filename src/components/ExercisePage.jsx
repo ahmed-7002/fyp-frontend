@@ -75,12 +75,24 @@ function usePingSound() {
 }
 
 function useSpeech() {
-  const speak = (text) => {
-    if (!("speechSynthesis" in window)) return;
+  const speak = (text, onEnd) => {
+    if (!("speechSynthesis" in window)) {
+      // No speech support - don't leave the caller waiting on a callback
+      // that would otherwise never fire.
+      if (onEnd) onEnd();
+      return;
+    }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = "en-US";
     utterance.rate = 0.95;
+    if (onEnd) {
+      // Fires when the utterance finishes normally, or if it's
+      // interrupted/errors out - either way the caller shouldn't get
+      // stuck waiting.
+      utterance.onend = onEnd;
+      utterance.onerror = onEnd;
+    }
     window.speechSynthesis.speak(utterance);
   };
   return speak;
@@ -187,6 +199,10 @@ function CheckInPrompt({ value, onSelect, onDismiss }) {
 function BreathingSection({ onCompleted }) {
   const [presetKey, setPresetKey] = useState("box");
   const [running, setRunning] = useState(false);
+  // True only for the brief window between clicking Start (with voice on)
+  // and the "get ready" message finishing - the actual inhale/hold/exhale
+  // cycle (and its own voice announcements) doesn't begin until this ends.
+  const [preparing, setPreparing] = useState(false);
   const [phaseIndex, setPhaseIndex] = useState(0);
   const [cycles, setCycles] = useState(0);
   const [voiceEnabled, setVoiceEnabled] = useState(false);
@@ -200,7 +216,7 @@ function BreathingSection({ onCompleted }) {
   const sequence = preset.sequence;
   const currentPhase = sequence[phaseIndex];
 
-  useWakeLock(running);
+  useWakeLock(running || preparing);
 
   useEffect(() => {
     if (!running) return;
@@ -236,12 +252,26 @@ function BreathingSection({ onCompleted }) {
   }, []);
 
   const handleStart = () => {
-    setPhaseIndex(0);
-    setCycles(0);
-    setRunning(true);
+    if (voiceEnabled) {
+      setPreparing(true);
+      speak(
+        "Get ready and close your eyes - you'll hear each step spoken aloud.",
+        () => {
+          setPreparing(false);
+          setPhaseIndex(0);
+          setCycles(0);
+          setRunning(true);
+        }
+      );
+    } else {
+      setPhaseIndex(0);
+      setCycles(0);
+      setRunning(true);
+    }
   };
 
   const handleStop = () => {
+    setPreparing(false);
     setRunning(false);
     clearTimeout(timeoutRef.current);
     if ("speechSynthesis" in window) window.speechSynthesis.cancel();
@@ -298,6 +328,16 @@ function BreathingSection({ onCompleted }) {
       )}
       {!voiceEnabled && <div className="mb-8" />}
 
+      {preparing && (
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="text-center font-display text-2xl text-ink mb-4"
+        >
+          Get ready...
+        </motion.p>
+      )}
+
       {running && (
         <motion.p
           key={currentPhase}
@@ -318,7 +358,7 @@ function BreathingSection({ onCompleted }) {
       </div>
 
       <div className="flex items-center justify-center gap-4 mb-6">
-        {!running ? (
+        {!running && !preparing ? (
           <button
             onClick={handleStart}
             className="px-7 py-3 rounded-full bg-teal text-white font-medium hover:bg-teal-dark transition-colors shadow-soft"
