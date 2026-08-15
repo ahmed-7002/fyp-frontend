@@ -350,12 +350,21 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
   // carrying all three DASS-21 subscale scores separately (rather than a
   // single summed total), so depression/anxiety/stress can each be drawn
   // as their own colored line instead of being collapsed together.
+  //
+  // `date` is kept as the full ISO timestamp (not a day-only string) on
+  // purpose: it's used as Recharts' x-axis category key, and if two
+  // sessions land on the same calendar day they'd otherwise share an
+  // identical "Jul 29" label. Recharts can then mismatch which point's
+  // data a tooltip shows for a given hover, since it partly matches by
+  // that label text - two sessions with the same label collide and one
+  // can display the other's numbers. A unique key per point (rendered
+  // via XAxis's tickFormatter below) avoids that entirely.
   const progressData = useMemo(() => {
     return filtered
       .filter((s) => (s.assessment_mode === "questionnaire" || s.assessment_mode === "combined") && s.dass_result)
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
       .map((s) => ({
-        date: formatShortDate(s.created_at),
+        date: s.created_at,
         depression: s.dass_result.depression_score,
         anxiety: s.dass_result.anxiety_score,
         stress: s.dass_result.stress_score,
@@ -489,12 +498,19 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={progressData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                     <CartesianGrid vertical={false} stroke={colors.mist} />
-                    <XAxis dataKey="date" tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={formatShortDate}
+                      tick={{ fontSize: 11, fill: colors.muted }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
                     {/* Positive width + non-negative chart margin so tick labels
                         (incl. their leading digit) render fully inside the card
                         instead of being clipped by the card's own border/padding. */}
                     <YAxis tick={{ fontSize: 11, fill: colors.muted }} axisLine={false} tickLine={false} width={34} />
                     <Tooltip
+                      labelFormatter={formatDate}
                       contentStyle={{ background: colors.mist, border: "none", borderRadius: 12, fontSize: 12 }}
                       labelStyle={{ color: colors.ink }}
                     />
