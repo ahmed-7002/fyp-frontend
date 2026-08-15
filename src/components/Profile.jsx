@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from "recharts";
 import { useApiClient } from "../lib/api.js";
-import { getCachedSessions, prefetchSessions, setCachedSessions } from "../lib/sessionsStore.js";
+import { getCachedSessions, refreshSessions, setCachedSessions } from "../lib/sessionsStore.js";
 import { useTheme } from "../lib/ThemeContext.jsx";
 import { ProfileSkeleton } from "./Skeleton.jsx";
 import { usePageTitle } from "../lib/usePageTitle.js";
@@ -757,13 +757,16 @@ export default function Profile() {
 
   useEffect(() => {
     let mounted = true;
-    // prefetchSessions() resolves instantly from cache if Navbar already
-    // fetched this on hover/focus, reuses that same in-flight request if
-    // it's still pending, or - if neither happened - starts a fresh GET
-    // right here. Either way this component only ever fires at most one
-    // network request of its own, never a duplicate of a hover-triggered
-    // one.
-    prefetchSessions(api)
+    // Unlike Navbar's speculative hover (which is fine serving a cached
+    // list), an actual Profile visit needs to be correct: after
+    // submitting a new assessment on the Results page, the cache may
+    // still hold the pre-submission list. refreshSessions() always hits
+    // the network and updates the cache, so a freshly submitted
+    // assessment shows up here without needing a manual page refresh -
+    // it still de-dupes against a hover request that happens to be
+    // in-flight at this exact moment, just never skips the network call
+    // outright the way prefetchSessions() does.
+    refreshSessions(api)
       .then((data) => mounted && setSessions(data))
       .catch(() => mounted && setError("Couldn't load your past sessions."));
     return () => {

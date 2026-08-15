@@ -48,6 +48,35 @@ export function prefetchSessions(api) {
   return inFlightRequest;
 }
 
+/**
+ * Always hits the network, regardless of what's cached, and updates the
+ * cache with the result. Use this for an actual Profile visit (as opposed
+ * to Navbar's speculative hover): after submitting a new assessment on the
+ * Results page, the cache may still be holding the pre-submission list, so
+ * Profile needs a guaranteed fresh fetch on every mount rather than
+ * trusting whatever's cached.
+ *
+ * Still de-dupes against a request already in flight (so a hover firing
+ * moments before this won't cause two overlapping GETs), but unlike
+ * prefetchSessions() it never short-circuits just because *something* is
+ * already cached.
+ */
+export function refreshSessions(api) {
+  if (inFlightRequest) return inFlightRequest;
+
+  inFlightRequest = api
+    .get("/api/assessments")
+    .then((res) => {
+      cachedSessions = res.data;
+      return cachedSessions;
+    })
+    .finally(() => {
+      inFlightRequest = null;
+    });
+
+  return inFlightRequest;
+}
+
 /** Lets a local mutation (e.g. deleting a session in Profile) keep the
  * cache in sync immediately, without forcing a throwaway refetch the next
  * time someone hovers the Profile link or the page remounts. */
