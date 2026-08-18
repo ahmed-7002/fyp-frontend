@@ -433,9 +433,15 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
     if (progressData.length === 0 && emotionData.length === 0) return;
     setExporting(true);
     try {
-      const res = await api.get(`/api/assessments/export/excel?range=${rangeKey}`, {
-        responseType: "blob",
-      });
+      // `_ts` is a cache-buster, not a real param the backend reads - the
+      // backend also sends Cache-Control: no-store, but this covers any
+      // in-between layer (mobile browser HTTP cache, a proxy/CDN, etc.)
+      // that might ignore those headers and just replay whatever it
+      // already has cached for this exact URL+range.
+      const res = await api.get(
+        `/api/assessments/export/excel?range=${rangeKey}&_ts=${Date.now()}`,
+        { responseType: "blob" }
+      );
       const blob = new Blob([res.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
