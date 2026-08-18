@@ -307,45 +307,6 @@ function EmptyChartState({ message }) {
 }
 
 /**
- * Rasterizes a live <svg> element (as rendered by Recharts) into a PNG data
- * URL, by serializing it, loading it into an offscreen <img>, then drawing
- * that onto a <canvas>. Used to embed a snapshot of the current Insights
- * charts into the exported .xlsx - not a "live" native Excel chart (no
- * lightweight browser library can generate those reliably), but a pixel-
- * accurate picture of exactly what the person sees in the app.
- */
-function svgToPngDataUrl(svgEl, scale = 2) {
-  return new Promise((resolve, reject) => {
-    const width = svgEl.viewBox?.baseVal?.width || svgEl.clientWidth || 600;
-    const height = svgEl.viewBox?.baseVal?.height || svgEl.clientHeight || 300;
-
-    const xml = new XMLSerializer().serializeToString(svgEl);
-    const svgBlob = new Blob([xml], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(svgBlob);
-
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = width * scale;
-      canvas.height = height * scale;
-      const ctx = canvas.getContext("2d");
-      // White backing so the chart doesn't inherit a transparent
-      // background when viewed against Excel's default white cells.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      URL.revokeObjectURL(url);
-      resolve({ dataUrl: canvas.toDataURL("image/png"), width, height });
-    };
-    img.onerror = (err) => {
-      URL.revokeObjectURL(url);
-      reject(err);
-    };
-    img.src = url;
-  });
-}
-
-/**
  * The new Insights layout: header + filter, two charts, then a preview
  * grid of recent assessment cards. Sits above the existing full session
  * list (which is untouched below) - "View All" scrolls down to it rather
@@ -364,10 +325,6 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
   // clicking the same color a second time.
   const [isolatedLine, setIsolatedLine] = useState(null);
   const [exporting, setExporting] = useState(false);
-  // Point at the wrapper div around each chart's <ResponsiveContainer>, so
-  // the export handler can find the live <svg> Recharts rendered inside.
-  const progressChartWrapRef = useRef(null);
-  const emotionChartWrapRef = useRef(null);
 
   // Single range-filtered, column-trimmed request per range change -
   // replaces the old "fetch full detail for every session, then filter by
@@ -464,68 +421,22 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
     { key: "stress", label: "Stress", color: colors.clay },
   ];
 
-  // Builds an .xlsx with one row per questionnaire/combined session (Date,
-  // Time, Depression, Anxiety, Stress), then embeds snapshots of the two
-  // Insights charts below the table. exceljs (not the lighter `xlsx`
-  // package) is used specifically because it's the one that can embed
-  // images into a worksheet - dynamically imported so its ~1MB doesn't
-  // bloat the initial bundle for people who never click this button.
+  // Excel generation now happens server-side (GET /assessments/export/excel
+  // - see assessment.py), which builds the workbook with openpyxl and
+  // real, editable LineChart/BarChart objects rather than a rasterized
+  // picture of what's on screen. This handler's only job is to fetch that
+  // file as a blob (through the app's authenticated api client, same as
+  // every other request on this page) and trigger a normal browser
+  // download - so it stays in sync with the same `rangeKey` the two charts
+  // above are currently showing.
   const handleDownloadInsights = async () => {
     if (progressData.length === 0 && emotionData.length === 0) return;
     setExporting(true);
     try {
-      const ExcelJS = (await import("exceljs")).default;
-      const workbook = new ExcelJS.Workbook();
-      workbook.creator = "Mindful Check-In";
-      workbook.created = new Date();
-
-      const sheet = workbook.addWorksheet("Insights");
-      sheet.columns = [
-        { header: "Date", key: "date", width: 16 },
-        { header: "Time", key: "time", width: 12 },
-        { header: "Depression", key: "depression", width: 13 },
-        { header: "Anxiety", key: "anxiety", width: 13 },
-        { header: "Stress", key: "stress", width: 13 },
-      ];
-      const headerRow = sheet.getRow(1);
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
-      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF2B6F6B" } };
-
-      // progressData.date is the full ISO timestamp (see the tooltip-
-      // mismatch fix earlier) - split it into separate Date/Time columns
-      // here rather than exporting one combined column.
-      progressData.forEach((p) => {
-        const d = new Date(p.date);
-        sheet.addRow({
-          date: d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
-          time: d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }),
-          depression: p.depression,
-          anxiety: p.anxiety,
-          stress: p.stress,
-        });
+      const res = await api.get(`/api/assessments/export/excel?range=${rangeKey}`, {
+        responseType: "blob",
       });
-
-      let nextRow = sheet.rowCount + 3;
-
-      const embedChart = async (wrapRef, caption) => {
-        const svg = wrapRef.current?.querySelector("svg");
-        if (!svg) return;
-        const { dataUrl, width, height } = await svgToPngDataUrl(svg);
-        sheet.getCell(`A${nextRow}`).value = caption;
-        sheet.getCell(`A${nextRow}`).font = { bold: true, color: { argb: "FF1E4F4C" } };
-        nextRow += 1;
-        const imageId = workbook.addImage({ base64: dataUrl.split(",")[1], extension: "png" });
-        const displayWidth = 480;
-        const displayHeight = Math.round((height / width) * displayWidth);
-        sheet.addImage(imageId, { tl: { col: 0, row: nextRow - 1 }, ext: { width: displayWidth, height: displayHeight } });
-        nextRow += Math.ceil(displayHeight / 20) + 3;
-      };
-
-      await embedChart(progressChartWrapRef, "Overall Progress");
-      await embedChart(emotionChartWrapRef, "Facial Emotion Summary");
-
-      const buffer = await workbook.xlsx.writeBuffer();
-      const blob = new Blob([buffer], {
+      const blob = new Blob([res.data], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
       const url = URL.createObjectURL(blob);
@@ -628,7 +539,7 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
                   )}
                 </div>
 
-                <div ref={progressChartWrapRef}>
+                <div>
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart data={progressData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke={colors.mist} />
@@ -672,7 +583,7 @@ function InsightsSection({ api, refreshToken, onViewAllClick }) {
             {emotionData.length === 0 ? (
               <EmptyChartState message="No video sessions in this range yet." />
             ) : (
-              <div ref={emotionChartWrapRef}>
+              <div>
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={emotionData} margin={{ top: 8, right: 8, left: 4, bottom: 0 }}>
                     <CartesianGrid vertical={false} stroke={colors.mist} />
